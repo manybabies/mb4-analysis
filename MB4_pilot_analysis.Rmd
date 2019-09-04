@@ -16,6 +16,7 @@ library(meta)
 library(lme4)
 library(here)
 library(knitr)
+library(bridgesampling)
 
 theme_set(theme_bw())
 ```
@@ -239,7 +240,7 @@ Now bridge sampling for a bayes factor on the presence/absence of the intercept.
 ```{r}
 H0.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
 H1.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
-bf01 <- bf(bayes_mod, bayes_mod_nointercept)
+bf01 <- bf(H0.bridge, H1.bridge)
 print(bf01)
 ```
 
