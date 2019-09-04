@@ -1,0 +1,258 @@
+---
+title: "MB4 Pilot Analyses_August 2019"
+author: "Kelsey Lucca & Mike Frank"
+date: "9/4/2019"
+output: html_document
+---
+
+Load packages, set themes, and rename variables
+
+```{r}
+library(tidyverse)
+library(brms)
+library(binom)
+library(ICCbin)
+library(meta)
+library(lme4)
+library(here)
+library(knitr)
+
+theme_set(theme_bw())
+```
+
+
+Read data and rename helper and hinderer choices for analyses.
+
+```{r}
+pilot <- read_csv(here("pilot_data/MB4_CompiledData_June2019.csv")) %>%
+  mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 
+                               TRUE, FALSE))
+```
+
+
+# Descriptives
+
+```{r}
+pilot %>%
+  group_by(lab_id, fam_hab, session_error) %>%
+  count() %>% 
+  kable()
+```
+
+
+# Pilot Phase 1: Familiarization analyses
+
+Convert data to long format to examine looking time trends during the familiarization events, filtering data by usable participants and participants who only received familiarization paradigm. 
+
+```{r}
+looking <- pilot %>% 
+  filter (fam_hab == "fam" & session_error =="noerror") %>% 
+  gather(trial_number, looking_duration, 
+         matches("trial[123456]_lookingtime")) %>%
+  mutate(trial_number =  as.numeric(str_replace(str_replace(
+    trial_number, "trial",""), "_lookingtime",""))) %>%
+  select(lab_id, subj_id, age_months, trial_number, looking_duration)
+```
+
+plot looking time data
+
+```{r}
+ggplot(looking,
+       aes(x = trial_number, y = looking_duration, group = trial_number))+
+  geom_boxplot() +
+  xlab("Trial Number")+
+  ylab("Looking Duration (s)")
+```
+
+summarize looking time means across trials
+
+```{r}
+looking %>%
+  group_by(trial_number) %>%
+  summarise(mean=mean(looking_duration)) %>%
+  kable()
+```
+
+summarize choices across infants 
+
+```{r}
+pilot %>% 
+  filter(fam_hab == "fam" & session_error =="noerror") %>%
+  summarise(mean = mean(chose_helper), 
+            n = n()) %>%
+  kable
+```
+
+No preference among familiarization infants. 
+
+# Pilot Phase 2: Habituation Analyses
+
+Calculate the number of infants who successfully habituated. You habituated if LT decreases by a factor of 2 between 1,2,3 and 4,5,6
+
+```{r}
+pilot %>% 
+  filter(fam_hab == "fam" & session_error =="noerror") %>% 
+  mutate(habituated = 
+           ifelse(((trial4_lookingtime + trial5_lookingtime + 
+                      trial6_lookingtime) < 
+                     ((trial1_lookingtime + trial2_lookingtime + 
+                         trial3_lookingtime)/2)), 
+                  TRUE, FALSE)) %>%
+  group_by(lab_id, habituated) %>%
+  count() %>%
+  kable()
+```
+
+Most babies didn't habituate. So, let's filter to the habituation version.
+
+Summarize choice behavior across labs and ages.
+
+```{r}
+pilot %>% 
+  filter(fam_hab=="hab" & session_error=="noerror") %>%
+  summarise(chose_helper = mean(chose_helper), 
+            n = n()) %>%
+  kable()
+```
+
+Now we see a larger number of helper-choosers. 
+
+## Main GLM analysis: model 1 (all infants) 
+
+```{r}
+all_habitation_data <- pilot %>% 
+  filter(fam_hab == "hab" & session_error == "noerror")
+
+# FULL MODEL IS SINGULAR WITH PILOT DATA
+# glmer_mod <- glmer(chose_helper ~ age_days + 
+#         (age_days | lab_id),
+#       family = binomial,
+#       data = habituators)
+
+glmer_mod <- glm(chose_helper ~ age_days, family = binomial,
+                 data = all_habitation_data)
+
+summary(glmer_mod)
+```
+
+Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
+
+```{r}
+iccbin(cid = lab_id, y = chose_helper, 
+       data = all_habitation_data,
+       alpha = 0.05)
+```
+
+Age plot.
+
+```{r}
+ggplot(all_habitation_data, 
+       aes(x = age_months, y = chose_helper, group = 1)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .03, width = 0)) +
+  xlab("Age (months)") + 
+  ylab("Pr (chose helper)")
+```
+
+
+plot between lab variation
+
+```{r}
+by_lab <- all_habitation_data %>%
+  group_by(lab_id) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.confint(x = chose_helper, 
+                                     n = tested,
+                                     methods = "wilson")$lower, 
+            ci_upper = binom.confint(x = chose_helper, 
+                                     n = tested,
+                                     methods = "wilson")$upper)
+
+ggplot(by_lab,
+       aes(x = lab_id, y = chose_helper_mean,
+           ymin = ci_lower, ymax = ci_upper, color = lab_id)) + 
+  geom_point(aes(size = tested)) + 
+  geom_linerange() + 
+  coord_flip() + 
+  xlab("Lab") + 
+  ylab("Effect Size")
+```
+
+calculate meta-analysis of single proportions
+
+```{r}
+ma <- metaprop(event = by_lab$chose_helper,
+         n = by_lab$tested,
+         studlab = by_lab$lab_id)
+
+ma
+```
+
+
+# Main GLM analysis: model 2 (only include infants who successfully habituated)
+
+
+```{r}
+habituators_data <- pilot %>% 
+  filter(fam_hab == "hab", 
+         session_error == "noerror", 
+         sufficiently_decrease_looking == "yes")
+
+# FULL MODEL IS SINGULAR WITH PILOT DATA
+# glmer_mod <- glmer(chose_helper ~ age_days + 
+#         (age_days | lab_id),
+#       family = binomial,
+#       data = habituators)
+
+glmer_mod <- glm(chose_helper ~ age_days, family = binomial,
+                 data = habituators_data)
+
+summary(glmer_mod)
+```
+
+Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
+
+```{r}
+iccbin(cid = lab_id, y = chose_helper, 
+       data = habituators_data,
+       alpha = 0.05)
+```
+
+Age plot.
+
+```{r}
+ggplot(habituators_data, 
+       aes(x = age_months, y = chose_helper, group = 1)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .03, width = 0)) +
+  xlab("Age (months)") + 
+  ylab("Pr (chose helper)")
+```
+
+
+plot between lab variation
+
+```{r}
+by_lab <- habituators_data %>%
+  group_by(lab_id) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.confint(x = chose_helper, 
+                                     n = tested,
+                                     methods = "wilson")$lower, 
+            ci_upper = binom.confint(x = chose_helper, 
+                                     n = tested,
+                                     methods = "wilson")$upper)
+
+ggplot(by_lab,
+       aes(x = lab_id, y = chose_helper_mean,
+           ymin = ci_lower, ymax = ci_upper, color = lab_id)) + 
+  geom_point(aes(size = tested)) + 
+  geom_linerange() + 
+  coord_flip() + 
+  xlab("Lab") + 
+  ylab("Effect Size")
+```
