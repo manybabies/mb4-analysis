@@ -212,6 +212,37 @@ glmer_mod <- glm(chose_helper ~ age_days, family = binomial,
 summary(glmer_mod)
 ```
 
+Proposed Bayesian analysis.
+
+```{r}
+# annoying numeric paramter issue
+
+habituators_data$chosehelper <- as.numeric(habituators_data$chose_helper)
+
+bayes_mod <- brm(chosehelper ~ age_days + (age_days | lab_id), 
+    family = bernoulli, data = habituators_data, 
+    iter = 5000, 
+    control = list(adapt_delta = .99, max_treedepth = 20),
+    chains = 4, save_all_pars = TRUE)
+bayes_mod_nointercept <- brm(chosehelper ~ age_days - 1 + 
+                               (age_days | lab_id),
+    family = bernoulli, data = habituators_data, 
+    iter = 5000,
+    control = list(adapt_delta = .99, max_treedepth = 20), 
+    chains = 4, save_all_pars = TRUE)
+
+
+```
+
+Now bridge sampling for a bayes factor on the presence/absence of the intercept.
+
+```{r}
+H0.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
+H1.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
+bf01 <- bf(bayes_mod, bayes_mod_nointercept)
+print(bf01)
+```
+
 Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
 
 ```{r}
