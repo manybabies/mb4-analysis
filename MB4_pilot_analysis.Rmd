@@ -216,21 +216,22 @@ summary(glmer_mod)
 Proposed Bayesian analysis.
 
 ```{r}
-# annoying numeric paramter issue
+# Create a numeric version of choose_helper and scaled age_days for brms
+habituators_data <- habituators_data %>%
+  mutate(chose_helper_num = as.numeric(chose_helper),
+         z_age_days = scale(age_days))
 
-habituators_data$chosehelper <- as.numeric(habituators_data$chose_helper)
-
-bayes_mod <- brm(chosehelper ~ age_days + (age_days | lab_id), 
-    family = bernoulli, data = habituators_data, 
-    iter = 5000, 
-    control = list(adapt_delta = .99, max_treedepth = 20),
-    chains = 4, save_all_pars = TRUE)
-bayes_mod_nointercept <- brm(chosehelper ~ age_days - 1 + 
-                               (age_days | lab_id),
-    family = bernoulli, data = habituators_data, 
-    iter = 5000,
-    control = list(adapt_delta = .99, max_treedepth = 20), 
-    chains = 4, save_all_pars = TRUE)
+bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
+                 family = bernoulli, data = habituators_data, 
+                 iter = 5000, 
+                 control = list(adapt_delta = .99, max_treedepth = 20),
+                 chains = 4, save_all_pars = TRUE)
+bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
+                               (z_age_days - 1 | lab_id),
+                             family = bernoulli, data = habituators_data, 
+                             iter = 5000,
+                             control = list(adapt_delta = .99, max_treedepth = 20), 
+                             chains = 4, save_all_pars = TRUE)
 
 
 ```
