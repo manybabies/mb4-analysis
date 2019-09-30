@@ -15,8 +15,8 @@ infants_by_lab <- rnorm(n_labs, 35, 20) %>% round() %>% pmax.int(16) # Mean and 
 n_infants <- sum(infants_by_lab)
 age_min <- 165
 age_max <- 320
-pr_helper <- 0.64
-pr_helper_sd <- 0.03
+pr_helper <- 0.64     # From Margoni & Surian (estimated true effect size)
+pr_helper_sd <- 0.03  # From Margoni & Surian (confidence interval)
 
 # Generate repeat datasets
 n_sims <- 1 # Running multiple sims leads to brm errors with save_all_pars
@@ -50,7 +50,7 @@ priors.nointercept <- c(set_prior("normal(0, .5)",
 # RUN STATISTICS: RAW AGE ==========================================================================
 save_path <- "simulations_results/raw_age/"
 # Run bayesian models and bridge-sample
-run_models <- T
+run_models <- F
 if(run_models){
   ## Full model
   ### Run models
@@ -99,7 +99,7 @@ bf.raw_age <- bayes_factor(bridge.raw_age.full,
 # RUN STATISTICS: SCALED AGE =======================================================================
 save_path <- "simulations_results/scaled_age/"
 # Run bayesian models and bridge-sample
-run_models <- T
+run_models <- F
 if(run_models){
   ## Full model
   ### Run models
