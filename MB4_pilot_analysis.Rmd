@@ -118,41 +118,48 @@ pilot %>%
 
 Now we see a larger number of helper-choosers. 
 
-## Main GLM analysis: model 1 (all infants) 
+# Pilot data analysis
+
+Define data for the analyses
 
 ```{r}
 all_habitation_data <- pilot %>% 
-  filter(fam_hab == "hab" & session_error == "noerror")
+  filter(fam_hab == "hab" & session_error == "noerror") %>%
+  mutate(chose_helper_num = as.numeric(chose_helper),
+         z_age_days = scale(age_days), 
+         choice = fct_relevel(
+           as_factor(
+             ifelse(chose_helper, "Helper", "Hinderer")
+             ), 
+           "Hinderer")) # for viz
 
-# FULL MODEL IS SINGULAR WITH PILOT DATA
-# glmer_mod <- glmer(chose_helper ~ age_days + 
-#         (age_days | lab_id),
-#       family = binomial,
-#       data = habituators)
+habituators_data <- pilot %>% 
+  filter(fam_hab == "hab", 
+         session_error == "noerror", 
+         sufficiently_decrease_looking == "yes") %>%
+  mutate(chose_helper_num = as.numeric(chose_helper),
+         z_age_days = scale(age_days), 
+         choice = fct_relevel(
+           as_factor(
+             ifelse(chose_helper, "Helper", "Hinderer")
+             ), 
+           "Hinderer"))
 
-glmer_mod <- glm(chose_helper ~ age_days, family = binomial,
-                 data = all_habitation_data)
-
-summary(glmer_mod)
 ```
 
-Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
+## Main Bayesian GLM analysis: model 1 (all infants) 
 
-```{r}
-iccbin(cid = lab_id, y = chose_helper, 
-       data = all_habitation_data,
-       alpha = 0.05)
-```
+### Plots
 
 Age plot.
 
 ```{r}
 ggplot(all_habitation_data, 
-       aes(x = age_months, y = chose_helper, group = 1)) +
+       aes(x = age_months, y = choice, group = 1)) +
   stat_smooth(method = "lm") +
   geom_point(position = position_jitter(height = .03, width = 0)) +
   xlab("Age (months)") + 
-  ylab("Pr (chose helper)")
+  ylab("Choice")
 ```
 
 
@@ -173,62 +180,37 @@ by_lab <- all_habitation_data %>%
 
 ggplot(by_lab,
        aes(x = lab_id, y = chose_helper_mean,
-           ymin = ci_lower, ymax = ci_upper, color = lab_id)) + 
+           ymin = ci_lower, ymax = ci_upper)) + 
   geom_point(aes(size = tested)) + 
   geom_linerange() + 
   coord_flip() + 
   xlab("Lab") + 
-  ylab("Effect Size")
+  ylab("Proportion Choosing Helper") + 
+  ylim(0,1) + 
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")
 ```
 
-calculate meta-analysis of single proportions
+### Bayesian Analysis
+
+Fit three models - full model and two subset models for Bayes factors. 
 
 ```{r}
-ma <- metaprop(event = by_lab$chose_helper,
-         n = by_lab$tested,
-         studlab = by_lab$lab_id)
-
-ma
-```
-
-
-# Main GLM analysis: model 2 (only include infants who successfully habituated)
-
-
-```{r}
-habituators_data <- pilot %>% 
-  filter(fam_hab == "hab", 
-         session_error == "noerror", 
-         sufficiently_decrease_looking == "yes")
-
-# FULL MODEL IS SINGULAR WITH PILOT DATA
-# glmer_mod <- glmer(chose_helper ~ age_days + 
-#         (age_days | lab_id),
-#       family = binomial,
-#       data = habituators)
-
-glmer_mod <- glm(chose_helper ~ age_days, family = binomial,
-                 data = habituators_data)
-
-summary(glmer_mod)
-```
-
-Proposed Bayesian analysis.
-
-```{r}
-# Create a numeric version of choose_helper and scaled age_days for brms
-habituators_data <- habituators_data %>%
-  mutate(chose_helper_num = as.numeric(chose_helper),
-         z_age_days = scale(age_days))
-
 bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
-                 family = bernoulli, data = habituators_data, 
+                 family = bernoulli, data = all_habitation_data, 
                  iter = 5000, 
                  control = list(adapt_delta = .99, max_treedepth = 20),
                  chains = 4, save_all_pars = TRUE)
 bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
                                (z_age_days - 1 | lab_id),
-                             family = bernoulli, data = habituators_data, 
+                             family = bernoulli, data = all_habitation_data, 
+                             iter = 5000,
+                             control = list(adapt_delta = .99, max_treedepth = 20), 
+                             chains = 4, save_all_pars = TRUE)
+bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
+                               (1 | lab_id),
+                             family = bernoulli, data = all_habitation_data, 
                              iter = 5000,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
                              chains = 4, save_all_pars = TRUE)
@@ -239,19 +221,29 @@ bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 +
 Now bridge sampling for a bayes factor on the presence/absence of the intercept.
 
 ```{r}
-H0.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
-H1.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
-bf01 <- bf(H0.bridge, H1.bridge)
+H0_nointercept.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
+H0_noage.bridge <- bridge_sampler(bayes_mod_noage, silent = TRUE)
+H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
+```
+
+Bayes factor for intercept.
+
+```{r}
+bf01 <- bf(H0_nointercept.bridge, H1.bridge)
 print(bf01)
 ```
 
-Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
+Bayes factor for age.
 
 ```{r}
-iccbin(cid = lab_id, y = chose_helper, 
-       data = habituators_data,
-       alpha = 0.05)
+bf01 <- bf(H0_noage.bridge, H1.bridge)
+print(bf01)
 ```
+
+
+## Main GLM analysis: model 2 (only include infants who successfully habituated)
+
+## Plots
 
 Age plot.
 
@@ -282,10 +274,86 @@ by_lab <- habituators_data %>%
 
 ggplot(by_lab,
        aes(x = lab_id, y = chose_helper_mean,
-           ymin = ci_lower, ymax = ci_upper, color = lab_id)) + 
+           ymin = ci_lower, ymax = ci_upper)) + 
   geom_point(aes(size = tested)) + 
   geom_linerange() + 
   coord_flip() + 
   xlab("Lab") + 
-  ylab("Effect Size")
+  ylab("Proportion Choosing Helper") + 
+  ylim(0,1) + 
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")
+```
+
+### Bayesian Analysis
+
+Fit three models - full model and two subset models for Bayes factors. 
+
+```{r}
+bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
+                 family = bernoulli, data = habituators_data, 
+                 iter = 5000, 
+                 control = list(adapt_delta = .99, max_treedepth = 20),
+                 chains = 4, save_all_pars = TRUE)
+bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
+                               (z_age_days - 1 | lab_id),
+                             family = bernoulli, data = habituators_data, 
+                             iter = 5000,
+                             control = list(adapt_delta = .99, max_treedepth = 20), 
+                             chains = 4, save_all_pars = TRUE)
+bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
+                               (1 | lab_id),
+                             family = bernoulli, data = habituators_data, 
+                             iter = 5000,
+                             control = list(adapt_delta = .99, max_treedepth = 20), 
+                             chains = 4, save_all_pars = TRUE)
+
+
+```
+
+Now bridge sampling for a bayes factor on the presence/absence of the intercept.
+
+```{r}
+H0_nointercept.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
+H0_noage.bridge <- bridge_sampler(bayes_mod_noage, silent = TRUE)
+H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
+```
+
+Bayes factor for intercept.
+
+```{r}
+bf01 <- bf(H0_nointercept.bridge, H1.bridge)
+print(bf01)
+```
+
+Bayes factor for age.
+
+```{r}
+bf01 <- bf(H0_noage.bridge, H1.bridge)
+print(bf01)
+```
+
+
+## ICCs for variability
+
+Calculate the intraclass-correlation for random intercepts of the mixed effects model. Note that because the lab_id variable leads to a singular fit, this can't be computed for pilot data. 
+
+```{r}
+iccbin(cid = lab_id, y = chose_helper, 
+       data = all_habitation_data,
+       alpha = 0.05)
+```
+
+## Other analyses
+
+
+calculate meta-analysis of single proportions
+
+```{r}
+ma <- metaprop(event = by_lab$chose_helper,
+               n = by_lab$tested,
+               studlab = by_lab$lab_id)
+
+ma
 ```
