@@ -1,13 +1,13 @@
 ---
-title: "MB4 Pilot Analyses_August 2019"
-author: "Kelsey Lucca, Arthur Capelier-Mourguy & Mike Frank"
+title: "MB4 Pilot Analyses"
+author: "Kelsey Lucca, Arthur Capelier-Morgouy, & Mike Frank"
 date: "10/29/2019"
 output: html_document
 ---
 
 Load packages, set themes, and rename variables
 
-```{r}
+```{r message=FALSE}
 library(tidyverse)
 library(brms)
 library(binom)
@@ -20,12 +20,13 @@ library(bridgesampling)
 library(ggeffects)
 
 theme_set(theme_bw())
-```
 
+knitr::opts_chunk$set(cache = TRUE)
+```
 
 Read data and rename helper and hinderer choices for analyses.
 
-```{r}
+```{r message=FALSE}
 pilot <- read_csv(here("pilot_data/MB4_CompiledData_June2019.csv")) %>%
   mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 
                                TRUE, FALSE))
@@ -131,7 +132,7 @@ all_habituation_data <- pilot %>%
          choice = fct_relevel(
            as_factor(
              ifelse(chose_helper, "Helper", "Hinderer")
-             ), 
+           ), 
            "Hinderer")) # for viz
 
 habituators_data <- pilot %>% 
@@ -143,7 +144,7 @@ habituators_data <- pilot %>%
          choice = fct_relevel(
            as_factor(
              ifelse(chose_helper, "Helper", "Hinderer")
-             ), 
+           ), 
            "Hinderer"))
 
 ```
@@ -195,28 +196,49 @@ ggplot(by_lab,
 
 ### Bayesian Analysis
 
+Set partially informative priors, with intercept based on meta-analysis. 
+
+```{r}
+priors.full <- c(set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.nointercept <- c(set_prior("normal(0, .5)",
+                                  class = "b"),
+                        set_prior("student_t(3, 0, 2)",
+                                  class = "sd"))
+priors.noage <- c(set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                            class = "Intercept"),
+                  set_prior("student_t(3, 0, 2)",
+                            class = "sd"))
+```
+
+
 Fit three models - full model and two subset models for Bayes factors. 
 
 ```{r}
 bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
                  family = bernoulli, data = all_habituation_data, 
                  iter = 5000, 
+                 prior =  priors.full,
                  control = list(adapt_delta = .99, max_treedepth = 20),
                  chains = 4, save_all_pars = TRUE)
 bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
                                (z_age_days - 1 | lab_id),
                              family = bernoulli, data = all_habituation_data, 
                              iter = 5000,
+                             prior =  priors.nointercept,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
                              chains = 4, save_all_pars = TRUE)
 bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
-                               (1 | lab_id),
-                             family = bernoulli, data = all_habituation_data, 
-                             iter = 5000,
-                             control = list(adapt_delta = .99, max_treedepth = 20), 
-                             chains = 4, save_all_pars = TRUE)
-
-
+                         (1 | lab_id),
+                       family = bernoulli, data = all_habitation_data, 
+                       iter = 5000,
+                       prior =  priors.noage,
+                       control = list(adapt_delta = .99, max_treedepth = 20), 
+                       chains = 4, save_all_pars = TRUE)
 ```
 
 Now bridge sampling for a bayes factor on the presence/absence of the intercept.
@@ -230,15 +252,15 @@ H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
 Bayes factor for intercept.
 
 ```{r}
-bf01 <- bf(H0_nointercept.bridge, H1.bridge)
-print(bf01)
+bf10 <- bf(H1.bridge, H0_nointercept.bridge)
+print(bf10)
 ```
 
 Bayes factor for age.
 
 ```{r}
-bf01 <- bf(H0_noage.bridge, H1.bridge)
-print(bf01)
+bf10 <- bf(H1.bridge, H0_noage.bridge)
+print(bf10)
 ```
 
 Plot data and marginal effects from full model (too much noise with small dataset, prettier with simulated dataset)
@@ -265,7 +287,7 @@ ggplot(all_habituation_data,
                      labels = c("Hinderer", "Helper"))
 ```
 
-## Main GLM analysis: model 2 (only include infants who successfully habituated)
+## Main Bayesian GLM analysis: model 2 (successful habituators) 
 
 ### Plots
 
@@ -318,21 +340,24 @@ Fit three models - full model and two subset models for Bayes factors.
 bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
                  family = bernoulli, data = habituators_data, 
                  iter = 5000, 
+                 prior =  priors.full,
                  control = list(adapt_delta = .99, max_treedepth = 20),
                  chains = 4, save_all_pars = TRUE)
+
 bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
                                (z_age_days - 1 | lab_id),
                              family = bernoulli, data = habituators_data, 
                              iter = 5000,
+                             prior =  priors.nointercept,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
                              chains = 4, save_all_pars = TRUE)
 bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
-                               (1 | lab_id),
-                             family = bernoulli, data = habituators_data, 
-                             iter = 5000,
-                             control = list(adapt_delta = .99, max_treedepth = 20), 
-                             chains = 4, save_all_pars = TRUE)
-
+                         (1 | lab_id),
+                       family = bernoulli, data = habituators_data, 
+                       iter = 5000,
+                       prior =  priors.noage,
+                       control = list(adapt_delta = .99, max_treedepth = 20), 
+                       chains = 4, save_all_pars = TRUE)
 
 ```
 
@@ -347,15 +372,15 @@ H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
 Bayes factor for intercept.
 
 ```{r}
-bf01 <- bf(H0_nointercept.bridge, H1.bridge)
-print(bf01)
+bf10 <- bf(H1.bridge, H0_nointercept.bridge)
+print(bf10)
 ```
 
 Bayes factor for age.
 
 ```{r}
-bf01 <- bf(H0_noage.bridge, H1.bridge)
-print(bf01)
+bf10 <- bf(H1.bridge, H0_noage.bridge)
+print(bf10)
 ```
 
 Plot data and marginal effects from full model (too much noise with small dataset, prettier with simulated dataset)
