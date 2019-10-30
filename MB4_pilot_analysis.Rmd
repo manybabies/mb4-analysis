@@ -234,7 +234,7 @@ bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 +
                              chains = 4, save_all_pars = TRUE)
 bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
                          (1 | lab_id),
-                       family = bernoulli, data = all_habitation_data, 
+                       family = bernoulli, data = all_habituation_data, 
                        iter = 5000,
                        prior =  priors.noage,
                        control = list(adapt_delta = .99, max_treedepth = 20), 
