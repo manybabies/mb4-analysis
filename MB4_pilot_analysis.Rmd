@@ -1,11 +1,13 @@
 ---
 title: "MB4 Pilot Analyses"
-author: "Kelsey Lucca, Arthur Capelier-Morgouy, & Mike Frank"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, & Mike Frank"
 date: "10/29/2019"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
-Load packages, set themes, and rename variables
+Load packages, set themes, rename variables, declare helper functions
 
 ```{r message=FALSE}
 library(tidyverse)
@@ -18,10 +20,33 @@ library(here)
 library(knitr)
 library(bridgesampling)
 library(ggeffects)
+library(coda)
 
 theme_set(theme_bw())
 
 knitr::opts_chunk$set(cache = TRUE)
+
+# BRM FIXEF ESTIMATES
+# Return estimates and HPDIs for the fixed effects from a brms model,
+# for the given prob (default 0.89)
+estimates.brm_fixef <- function(model, prob = 0.89, digits = 2){
+  points <- model %>%
+    summary() %>%
+    {round(.$fixed[,1:2], digits = digits)} %>%
+    as_tibble(rownames = "Parameter") %>%
+    rename("Est. Error" = Est.Error)
+  CI <- paste0(100*prob, "% CI")
+  intervals <- model %>%
+    as.mcmc(pars = "^b_", combine_chains = T) %>%
+    HPDinterval(prob = prob) %>%
+    round(digits = digits) %>%
+    as_tibble(rownames = "Parameter") %>%
+    mutate(Parameter = str_remove(Parameter, "^b_"),
+           lower = paste0("[", lower),
+           upper = paste0(upper, "]")) %>%
+    unite(!!CI, lower, upper, sep = ", ")
+  return(left_join(points, intervals))
+}
 ```
 
 Read data and rename helper and hinderer choices for analyses.
@@ -218,24 +243,24 @@ priors.noage <- c(set_prior("normal(.5753641, .1)", # From Margoni & Surian, thr
 
 Fit three models - full model and two subset models for Bayes factors. 
 
-```{r}
+```{r results='hide', message=FALSE}
 bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
                  family = bernoulli, data = all_habituation_data, 
-                 iter = 5000, 
+                 iter = 10000, 
                  prior =  priors.full,
                  control = list(adapt_delta = .99, max_treedepth = 20),
                  chains = 4, save_all_pars = TRUE)
 bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
                                (z_age_days - 1 | lab_id),
                              family = bernoulli, data = all_habituation_data, 
-                             iter = 5000,
+                             iter = 10000,
                              prior =  priors.nointercept,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
                              chains = 4, save_all_pars = TRUE)
 bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
                          (1 | lab_id),
-                       family = bernoulli, data = all_habitation_data, 
-                       iter = 5000,
+                       family = bernoulli, data = all_habituation_data, 
+                       iter = 10000,
                        prior =  priors.noage,
                        control = list(adapt_delta = .99, max_treedepth = 20), 
                        chains = 4, save_all_pars = TRUE)
@@ -263,7 +288,14 @@ bf10 <- bf(H1.bridge, H0_noage.bridge)
 print(bf10)
 ```
 
-Plot data and marginal effects from full model (too much noise with small dataset, prettier with simulated dataset)
+Summary of the full model
+
+```{r}
+bayes_mod %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+Plot data and marginal effects from full model
 
 ```{r}
 all_habituation_data.marginal_effects <- bayes_mod %>%
@@ -336,10 +368,10 @@ ggplot(by_lab,
 
 Fit three models - full model and two subset models for Bayes factors. 
 
-```{r}
+```{r results='hide', message=FALSE}
 bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
                  family = bernoulli, data = habituators_data, 
-                 iter = 5000, 
+                 iter = 10000,
                  prior =  priors.full,
                  control = list(adapt_delta = .99, max_treedepth = 20),
                  chains = 4, save_all_pars = TRUE)
@@ -347,14 +379,14 @@ bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id),
 bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
                                (z_age_days - 1 | lab_id),
                              family = bernoulli, data = habituators_data, 
-                             iter = 5000,
+                             iter = 10000,
                              prior =  priors.nointercept,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
                              chains = 4, save_all_pars = TRUE)
 bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
                          (1 | lab_id),
                        family = bernoulli, data = habituators_data, 
-                       iter = 5000,
+                       iter = 10000,
                        prior =  priors.noage,
                        control = list(adapt_delta = .99, max_treedepth = 20), 
                        chains = 4, save_all_pars = TRUE)
@@ -383,7 +415,14 @@ bf10 <- bf(H1.bridge, H0_noage.bridge)
 print(bf10)
 ```
 
-Plot data and marginal effects from full model (too much noise with small dataset, prettier with simulated dataset)
+Summary of the full model
+
+```{r}
+bayes_mod %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+Plot data and marginal effects from full model
 
 ```{r}
 habituators_data.marginal_effects <- bayes_mod %>%
