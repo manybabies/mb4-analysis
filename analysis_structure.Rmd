@@ -1,0 +1,301 @@
+---
+title: "MB4 Pilot Analyses"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, & Mike Frank"
+date: "10/29/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction
+
+In this document, we detail the pre-registered analysis plan for the MB4 study, and illustrate it with simulated data following the expectation drawn from Margoni and Surian (2018).
+
+```{r message=FALSE}
+library(tidyverse)
+library(brms)
+library(binom)
+library(ICCbin)
+library(meta)
+library(lme4)
+library(here)
+library(knitr)
+library(bridgesampling)
+library(ggeffects)
+library(MCMCpack)
+library(coda)
+library(future)
+plan(multiprocess, workers = 4)
+
+source("StatTools.R")
+source("geom_flat_violin.R")
+
+theme_set(theme_bw())
+
+knitr::opts_chunk$set(cache = TRUE)
+```
+# Data simulations
+
+First, we need to generate data, using the estimated true effect size from a recent meta-analysis (Margoni & Surian, 2018) for the mean probability of choosing the helper versus hinderer character.
+
+To simulate lab variability, we use the effect sizes and Conf.Is reported for the studies analyzed by Margoni and Surian (2018). To simplify simulations, we make the conservative choice to assume 16 participants for each study when computing the standard deviation from Conf.Is. We then take the distribution of differences between those labs and the estimated true effect size from Margoni & Surian to define the between-lab variation for our simulated data. This is a necessary step as the estimated true effect size takes into account publication bias, amongst other factors, thus data simulations using directly the study-specific values would result in a bigger, less conservative simulated effect size. However, we use the study-specific standard deviations to better represent the uncertainty within in lab rather than overall for the meta-analysis.
+
+```{r lab_var}
+# Estimation from Margoni and Surian (2018)
+true_mean <- .64
+true_sd <- .1
+
+# Study-specific values
+lab_var <- tribble(
+  ~lab_id, ~est_mean, ~lower, ~upper,
+  "lab1",  .92, .80, .99,
+  "lab2",  .75, .54, .96,
+  "lab3",  .69, .51, .88,
+  "lab4",  .77, .60, .94,
+  "lab5",  .78, .63, .93,
+  "lab6",  .50, .36, .68,
+  "lab7",  .69, .50, .88,
+  "lab8",  .71, .55, .86,
+  "lab9",  .80, .66, .94,
+  "lab10", .71, .55, .86,
+  "lab11", .74, .54, .93,
+  "lab12", .78, .65, .91,
+  "lab13", .50, .37, .63,
+  "lab14", .61, .47, .75,
+  "lab15", .30, .02, .58,
+  "lab16", .56, .39, .73,
+  "lab17", .79, .63, .94,
+  "lab18", .94, .82, .99,
+  "lab19", .73, .54, .91,
+  "lab20", .50, .37, .63,
+  "lab21", .65, .48, .81,
+  "lab22", .75, .58, .92,
+  "lab23", .59, .38, .81,
+  "lab24", .80, .60, .99,
+  "lab25", .75, .57, .93,
+  "lab26", .61, .48, .75
+  ) %>%
+  mutate(CI_spread = (upper-lower)/2,
+         est_sd = CI_spread * sqrt(16) / 1.96)
+
+# Shape of the difference distributions
+sigma_mean <- sd(lab_var$est_mean)
+#mu_sd <- mean(lab_var$est_sd)
+sigma_sd <- sd(lab_var$est_sd)
+```
+
+We can then move on to simulating the entire dataset. We choose to simulate data coming from 20 different labs, for a total of 500 participants (minimum to reach 80% power), thus an average of 25 participants per lab. This is above the required minimum of 16 participants but seems sensible with respects to the variability in the number of participants collected observed in previous ManyBabies studies.
+
+```{r data_sims}
+# Define mean and sd choice for each lab
+labs <- tibble(lab_id = 1:20,
+               pr_choice_lab = rnorm(20, true_mean, sigma_mean),
+               sd_choice_lab = rnorm(20, true_sd, sigma_sd))
+# Simulate full dataset
+data.sims <- tibble(lab_id = sample(1:20, 250, replace = T)) %>%
+  left_join(labs) %>%
+  mutate(social = rnorm(250, pr_choice_lab, sd_choice_lab) %>% # Can give values outside [0,1]
+           pmin(1) %>% pmax(0),                                # Force back to [0,1]
+         non_social = rnorm(250, .5, sd_choice_lab) %>%
+           pmin(1) %>% pmax(0)) %>%
+  pivot_longer(c(social, non_social),
+               names_to = "condition",
+               values_to = "pr_choice") %>%
+  mutate(chose_helper = rbinom(500, 1, pr_choice),
+         age_days = sample(167:319, 500, replace = T),
+         z_age_days = scale(age_days))
+```
+
+# Data analysis
+
+We first produce some diagnostic plots. We then define the full Bayesian model against which null models will be compared. Finally we address the two research questions: do infants in the social condition choose preferably the helper character, and does preference for either character change with age.
+
+## Plots
+
+We can first check how infants in the two conditions performed in general depending on their age.
+
+```{r age_plot}
+ggplot(data.sims,
+       aes(x = z_age_days,
+           y = chose_helper,
+           colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .03, width = 0)) +
+  xlab("Age (scaled centred)") + ylab("Choice") +
+  scale_colour_brewer(palette = "Dark2",
+                      name = "Condition",
+                      breaks = c("non_social", "social"),
+                      labels = c("non-social", "social")) +
+  theme(legend.position = "top") +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer", "Helper"))
+```
+
+We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
+
+```{r lab_plot}
+by_lab <- data.sims %>%
+  group_by(lab_id, condition) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.bayes(x = chose_helper, 
+                                   n = tested)$lower,
+            ci_upper = binom.bayes(x = chose_helper, 
+                                   n = tested)$upper)
+
+ggplot(by_lab,
+       aes(x = lab_id, colour = condition,
+           y = chose_helper_mean,
+           ymin = ci_lower,
+           ymax = ci_upper)) + 
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  geom_linerange(position = position_dodge(width = .5)) + 
+  geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
+  coord_flip() + 
+  xlab("Lab") + 
+  ylab("Proportion Choosing Helper") + 
+  ylim(0,1) + 
+  scale_colour_brewer(palette = "Dark2",
+                      name = "Condition",
+                      breaks = c("non_social", "social"),
+                      labels = c("non-social", "social")) +
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")
+```
+
+## Bayesian analysis
+
+### Global Bayesian model
+
+We first need to define the full model that will be used throughout the Bayesian analysis, and define appropriate priors for this model. We define both a model with informative priors based on the meta-analysis by Margoni and Surian (2018), and a model with non-informative priors to check for the sensitivity of our results to the choice of priors. For the non-informative priors, we only specify a narrower prior for the random effects than the default one implemented in `brms` in order to improve model fit.
+
+```{r full_model}
+# Define priors
+priors.full <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                           class = "b", coef = "conditionsocial"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+# Run model
+brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days +
+                       (1 + condition + z_age_days | lab_id), 
+                     family = bernoulli, data = data.sims,
+                     prior = priors.full, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days +
+                          (1 + condition + z_age_days | lab_id), 
+                        family = bernoulli, data = data.sims,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can already look at the parameter estimates and their 95% Credible Intervals from this model.
+
+```{r full_estimates}
+brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
+
+```{r full_bridge}
+bridge.info.full <- bridge_sampler(brm.info.full, silent = T)
+bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
+```
+
+### Choice preference
+
+The first research question was whether or not infants in the social condition would chose the helper character more than infants in the non-social control condition, as evidenced by a greater-than-zero main effect of `condition`. To test this, we first define a null model, without the effect of interest. For the non-informative model, we use the same priors as for the full model.
+
+```{r nocondition_model}
+# Define priors
+priors.no_condition <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+# Run model
+brm.info.no_condition <- brm(chose_helper ~ 1 + z_age_days +
+                       (1 + z_age_days | lab_id), 
+                     family = bernoulli, data = data.sims,
+                     prior = priors.no_condition, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.no_condition <- brm(chose_helper ~ 1 + z_age_days +
+                          (1 + z_age_days | lab_id), 
+                        family = bernoulli, data = data.sims,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
+
+```{r bayes_nointercept}
+# Bridge-sample posterior
+bridge.info.no_condition <- bridge_sampler(brm.info.no_condition, silent = T)
+bridge.noninfo.no_condition <- bridge_sampler(brm.noninfo.no_condition, silent = T)
+# Compute Bayes factors
+bf.info.intercept <- bf(bridge.info.full, bridge.info.no_condition)
+bf.noninfo.intercept <- bf(bridge.noninfo.full, bridge.noninfo.no_condition)
+```
+
+We can see that, with informative priors, we obtain a BF = `r bf.info.intercept$bf` in favour of the full model, and a BF = `r bf.noninfo.intercept` with non-informative priors.
+
+### Effect of age
+
+The second research question we had was whether or not choice preference changed with age. To test this, we define a null model that does not have a main effect of `z_age_days` and compare it to the full model.
+
+```{r no_age}
+# Define priors
+priors.no_age <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                           class = "b", coef = "conditionsocial"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+# Run model
+brm.info.no_age <- brm(chose_helper ~ 1 + condition +
+                       (1 + condition | lab_id), 
+                     family = bernoulli, data = data.sims,
+                     prior = priors.no_age, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.no_age <- brm(chose_helper ~ 1 + condition +
+                          (1 + condition | lab_id), 
+                        family = bernoulli, data = data.sims,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+# Bridge-sample posterior
+bridge.info.no_age <- bridge_sampler(brm.info.no_age, silent = T)
+bridge.noninfo.no_age <- bridge_sampler(brm.noninfo.no_age, silent = T)
+# Compute Bayes factors
+bf.info.age <- bf(bridge.info.full, bridge.info.no_age)
+bf.noninfo.age <- bf(bridge.noninfo.full, bridge.noninfo.no_age)
+```
+
+We can see that, with informative priors, we obtain a BF = `r bf.info.age$bf` in favour of the null model, and a BF = `r bf.noninfo.age$bf` with non-informative priors.
+
+## Lab variety analysis: ICCs
+
+To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
+
+```{r icc}
+iccbin(cid = lab_id, y = chose_helper, 
+       data = data.sims,
+       alpha = 0.05)
+```
