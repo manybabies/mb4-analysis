@@ -21,32 +21,15 @@ library(knitr)
 library(bridgesampling)
 library(ggeffects)
 library(coda)
+library(future)
+plan(multiprocess, workers = 4)
+
+source("StatTools.R")
+source("geom_flat_violin.R")
 
 theme_set(theme_bw())
 
 knitr::opts_chunk$set(cache = TRUE)
-
-# BRM FIXEF ESTIMATES
-# Return estimates and HPDIs for the fixed effects from a brms model,
-# for the given prob (default 0.89)
-estimates.brm_fixef <- function(model, prob = 0.89, digits = 2){
-  points <- model %>%
-    summary() %>%
-    {round(.$fixed[,1:2], digits = digits)} %>%
-    as_tibble(rownames = "Parameter") %>%
-    rename("Est. Error" = Est.Error)
-  CI <- paste0(100*prob, "% CI")
-  intervals <- model %>%
-    as.mcmc(pars = "^b_", combine_chains = T) %>%
-    HPDinterval(prob = prob) %>%
-    round(digits = digits) %>%
-    as_tibble(rownames = "Parameter") %>%
-    mutate(Parameter = str_remove(Parameter, "^b_"),
-           lower = paste0("[", lower),
-           upper = paste0(upper, "]")) %>%
-    unite(!!CI, lower, upper, sep = ", ")
-  return(left_join(points, intervals))
-}
 ```
 
 Read data and rename helper and hinderer choices for analyses.
@@ -244,26 +227,26 @@ priors.noage <- c(set_prior("normal(.5753641, .1)", # From Margoni & Surian, thr
 Fit three models - full model and two subset models for Bayes factors. 
 
 ```{r results='hide', message=FALSE}
-bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
+bayes_mod <- brm(chose_helper_num ~ 1 + z_age_days + (1 + z_age_days | lab_id), 
                  family = bernoulli, data = all_habituation_data, 
                  iter = 10000, 
                  prior =  priors.full,
                  control = list(adapt_delta = .99, max_treedepth = 20),
-                 chains = 4, save_all_pars = TRUE)
-bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
-                               (z_age_days - 1 | lab_id),
+                 chains = 4, future = T, save_all_pars = TRUE)
+bayes_mod_nointercept <- brm(chose_helper_num ~ 0 + z_age_days + 
+                               (0 + z_age_days | lab_id),
                              family = bernoulli, data = all_habituation_data, 
                              iter = 10000,
                              prior =  priors.nointercept,
                              control = list(adapt_delta = .99, max_treedepth = 20), 
-                             chains = 4, save_all_pars = TRUE)
-bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
+                             chains = 4, future = T, save_all_pars = TRUE)
+bayes_mod_noage <- brm(chose_helper_num ~ 1 +
                          (1 | lab_id),
                        family = bernoulli, data = all_habituation_data, 
                        iter = 10000,
                        prior =  priors.noage,
                        control = list(adapt_delta = .99, max_treedepth = 20), 
-                       chains = 4, save_all_pars = TRUE)
+                       chains = 4, future = T, save_all_pars = TRUE)
 ```
 
 Now bridge sampling for a bayes factor on the presence/absence of the intercept.
@@ -277,15 +260,15 @@ H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
 Bayes factor for intercept.
 
 ```{r}
-bf10 <- bf(H1.bridge, H0_nointercept.bridge)
-print(bf10)
+bf10.intercept <- bf(H1.bridge, H0_nointercept.bridge)
+print(paste("Intercept BF:", bf10.intercept$bf))
 ```
 
 Bayes factor for age.
 
 ```{r}
-bf10 <- bf(H1.bridge, H0_noage.bridge)
-print(bf10)
+bf10.age <- bf(H1.bridge, H0_noage.bridge)
+print(paste("Age BF:", bf10.age$bf))
 ```
 
 Summary of the full model
@@ -369,56 +352,56 @@ ggplot(by_lab,
 Fit three models - full model and two subset models for Bayes factors. 
 
 ```{r results='hide', message=FALSE}
-bayes_mod <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
-                 family = bernoulli, data = habituators_data, 
-                 iter = 10000,
-                 prior =  priors.full,
-                 control = list(adapt_delta = .99, max_treedepth = 20),
-                 chains = 4, save_all_pars = TRUE)
+bayes_mod2 <- brm(chose_helper_num ~ z_age_days + (z_age_days | lab_id), 
+                  family = bernoulli, data = habituators_data, 
+                  iter = 10000,
+                  prior =  priors.full,
+                  control = list(adapt_delta = .99, max_treedepth = 20),
+                  chains = 4, future = T, save_all_pars = TRUE)
 
-bayes_mod_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
-                               (z_age_days - 1 | lab_id),
-                             family = bernoulli, data = habituators_data, 
-                             iter = 10000,
-                             prior =  priors.nointercept,
-                             control = list(adapt_delta = .99, max_treedepth = 20), 
-                             chains = 4, save_all_pars = TRUE)
-bayes_mod_noage <- brm(chose_helper_num ~ 1 + 
-                         (1 | lab_id),
-                       family = bernoulli, data = habituators_data, 
-                       iter = 10000,
-                       prior =  priors.noage,
-                       control = list(adapt_delta = .99, max_treedepth = 20), 
-                       chains = 4, save_all_pars = TRUE)
+bayes_mod2_nointercept <- brm(chose_helper_num ~ z_age_days - 1 + 
+                                (z_age_days - 1 | lab_id),
+                              family = bernoulli, data = habituators_data, 
+                              iter = 10000,
+                              prior =  priors.nointercept,
+                              control = list(adapt_delta = .99, max_treedepth = 20), 
+                              chains = 4, future = T, save_all_pars = TRUE)
+bayes_mod2_noage <- brm(chose_helper_num ~ 1 + 
+                          (1 | lab_id),
+                        family = bernoulli, data = habituators_data, 
+                        iter = 10000,
+                        prior =  priors.noage,
+                        control = list(adapt_delta = .99, max_treedepth = 20), 
+                        chains = 4, future = T, save_all_pars = TRUE)
 
 ```
 
 Now bridge sampling for a bayes factor on the presence/absence of the intercept.
 
 ```{r}
-H0_nointercept.bridge <- bridge_sampler(bayes_mod_nointercept, silent = TRUE)
-H0_noage.bridge <- bridge_sampler(bayes_mod_noage, silent = TRUE)
-H1.bridge <- bridge_sampler(bayes_mod, silent = TRUE)
+H0_nointercept2.bridge <- bridge_sampler(bayes_mod2_nointercept, silent = TRUE)
+H0_noage2.bridge <- bridge_sampler(bayes_mod2_noage, silent = TRUE)
+H1.bridge2 <- bridge_sampler(bayes_mod2, silent = TRUE)
 ```
 
 Bayes factor for intercept.
 
 ```{r}
-bf10 <- bf(H1.bridge, H0_nointercept.bridge)
-print(bf10)
+bf10.intercept2 <- bf(H1.bridge2, H0_nointercept2.bridge)
+print(paste("Intercept BF:", bf10.intercept2$bf))
 ```
 
 Bayes factor for age.
 
 ```{r}
-bf10 <- bf(H1.bridge, H0_noage.bridge)
-print(bf10)
+bf10.age2 <- bf(H1.bridge2, H0_noage2.bridge)
+print(paste("Age BF:", bf10.age2$bf))
 ```
 
 Summary of the full model
 
 ```{r}
-bayes_mod %>% estimates.brm_fixef(prob = .95) %>%
+bayes_mod2 %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
 
