@@ -31,6 +31,7 @@ source("StatTools.R")
 source("geom_flat_violin.R")
 
 theme_set(theme_bw())
+set.seed(705)
 
 knitr::opts_chunk$set(cache = TRUE)
 ```
@@ -38,7 +39,7 @@ knitr::opts_chunk$set(cache = TRUE)
 
 First, we need to generate data, using the estimated true effect size from a recent meta-analysis (Margoni & Surian, 2018) for the mean probability of choosing the helper versus hinderer character.
 
-To simulate lab variability, we use the effect sizes and Conf.Is reported for the studies analyzed by Margoni and Surian (2018). To simplify simulations, we make the conservative choice to assume 16 participants for each study when computing the standard deviation from Conf.Is. We then take the distribution of differences between those labs and the estimated true effect size from Margoni & Surian to define the between-lab variation for our simulated data. This is a necessary step as the estimated true effect size takes into account publication bias, amongst other factors, thus data simulations using directly the study-specific values would result in a bigger, less conservative simulated effect size. However, we use the study-specific standard deviations to better represent the uncertainty within in lab rather than overall for the meta-analysis.
+To simulate lab variability, we use the effect sizes and Conf.Is reported for the studies analyzed by Margoni and Surian (2018). To simplify simulations, we make the conservative choice to assume 16 participants for each study when computing the standard deviation from Conf.Is. We then take the distribution of differences between those labs and the estimated true effect size from Margoni & Surian to define the between-lab variation for our simulated data. This is a necessary step as the estimated true effect size takes into account publication bias, amongst other factors, thus data simulations using directly the study-specific values would result in a bigger, less conservative simulated effect size.
 
 ```{r lab_var}
 # Estimation from Margoni and Surian (2018)
@@ -80,7 +81,7 @@ lab_var <- tribble(
 
 # Shape of the difference distributions
 sigma_mean <- sd(lab_var$est_mean)
-#mu_sd <- mean(lab_var$est_sd)
+mu_sd <- mean(lab_var$est_sd)
 sigma_sd <- sd(lab_var$est_sd)
 ```
 
@@ -88,9 +89,11 @@ We can then move on to simulating the entire dataset. We choose to simulate data
 
 ```{r data_sims}
 # Define mean and sd choice for each lab
+# Lab sd and meta sd are very different, we take a value in the middle
 labs <- tibble(lab_id = 1:20,
                pr_choice_lab = rnorm(20, true_mean, sigma_mean),
-               sd_choice_lab = rnorm(20, true_sd, sigma_sd))
+               sd_choice_lab = rnorm(20, mean(true_sd, mu_sd), sigma_sd) %>% # Can be <0
+                 pmax(.05))
 # Simulate full dataset
 data.sims <- tibble(lab_id = sample(1:20, 250, replace = T)) %>%
   left_join(labs) %>%
@@ -121,12 +124,10 @@ ggplot(data.sims,
            colour = condition)) +
   stat_smooth(method = "lm") +
   geom_point(position = position_jitter(height = .03, width = 0)) +
-  xlab("Age (scaled centred)") + ylab("Choice") +
-  scale_colour_brewer(palette = "Dark2",
-                      name = "Condition",
+  xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
                       breaks = c("non_social", "social"),
                       labels = c("non-social", "social")) +
-  theme(legend.position = "top") +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer", "Helper"))
 ```
@@ -146,18 +147,12 @@ by_lab <- data.sims %>%
 
 ggplot(by_lab,
        aes(x = lab_id, colour = condition,
-           y = chose_helper_mean,
-           ymin = ci_lower,
-           ymax = ci_upper)) + 
+           y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
   geom_hline(yintercept = .5, col = "black", lty = 2) + 
   geom_linerange(position = position_dodge(width = .5)) + 
   geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
-  coord_flip() + 
-  xlab("Lab") + 
-  ylab("Proportion Choosing Helper") + 
-  ylim(0,1) + 
-  scale_colour_brewer(palette = "Dark2",
-                      name = "Condition",
+  coord_flip() + xlab("Lab") + ylab("Proportion Choosing Helper") + ylim(0,1) + 
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
                       breaks = c("non_social", "social"),
                       labels = c("non-social", "social")) +
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
@@ -170,7 +165,7 @@ ggplot(by_lab,
 
 We first need to define the full model that will be used throughout the Bayesian analysis, and define appropriate priors for this model. We define both a model with informative priors based on the meta-analysis by Margoni and Surian (2018), and a model with non-informative priors to check for the sensitivity of our results to the choice of priors. For the non-informative priors, we only specify a narrower prior for the random effects than the default one implemented in `brms` in order to improve model fit.
 
-```{r full_model}
+```{r full_model, results=FALSE, message=FALSE}
 # Define priors
 priors.full <- c(set_prior("normal(0, .1)",
                            class = "Intercept"),
@@ -199,7 +194,7 @@ brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days +
 
 We can already look at the parameter estimates and their 95% Credible Intervals from this model.
 
-```{r full_estimates}
+```{r full_estimates, message=FALSE}
 brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
@@ -217,7 +212,7 @@ bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
 
 The first research question was whether or not infants in the social condition would chose the helper character more than infants in the non-social control condition, as evidenced by a greater-than-zero main effect of `condition`. To test this, we first define a null model, without the effect of interest. For the non-informative model, we use the same priors as for the full model.
 
-```{r nocondition_model}
+```{r nocondition_model, results=FALSE, message=FALSE}
 # Define priors
 priors.no_condition <- c(set_prior("normal(0, .1)",
                            class = "Intercept"),
@@ -251,13 +246,13 @@ bf.info.intercept <- bf(bridge.info.full, bridge.info.no_condition)
 bf.noninfo.intercept <- bf(bridge.noninfo.full, bridge.noninfo.no_condition)
 ```
 
-We can see that, with informative priors, we obtain a BF = `r bf.info.intercept$bf` in favour of the full model, and a BF = `r bf.noninfo.intercept` with non-informative priors.
+We can see that, with informative priors, we obtain a BF = `r bf.info.intercept$bf` in favour of the full model, and a BF = `r bf.noninfo.intercept$bf` with non-informative priors.
 
 ### Effect of age
 
 The second research question we had was whether or not choice preference changed with age. To test this, we define a null model that does not have a main effect of `z_age_days` and compare it to the full model.
 
-```{r no_age}
+```{r no_age, results=FALSE, message=FALSE}
 # Define priors
 priors.no_age <- c(set_prior("normal(0, .1)",
                            class = "Intercept"),
@@ -295,7 +290,7 @@ We can see that, with informative priors, we obtain a BF = `r bf.info.age$bf` in
 To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
 
 ```{r icc}
-iccbin(cid = lab_id, y = chose_helper, 
-       data = data.sims,
-       alpha = 0.05)
+icc <- iccbin(cid = lab_id, y = chose_helper, 
+              data = data.sims,
+              alpha = 0.05)
 ```
