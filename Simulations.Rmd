@@ -1006,3 +1006,7 @@ pwr.lab_var %>%
 ```
 
 We see overall no evident effect of lab variability on power: it seems, if anything, that the power for the no-control analysis decreased, while the power for the control analysis slightly increased.
+
+# Post-review power simulations
+
+

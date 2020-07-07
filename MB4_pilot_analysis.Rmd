@@ -164,12 +164,14 @@ habituators_data <- pilot %>%
 Age plot.
 
 ```{r}
-ggplot(all_habituation_data, 
-       aes(x = age_months, y = choice, group = 1)) +
-  stat_smooth(method = "lm") +
-  geom_point(position = position_jitter(height = .03, width = 0)) +
+scatter <- ggplot(all_habituation_data, 
+                  aes(x = age_months, y = choice, group = 1)) +
+  stat_smooth(method = "lm", size = .5) +
+  geom_point(position = position_jitter(height = .03, width = 0),
+             size = 1) +
   xlab("Age (months)") + 
   ylab("Choice")
+(scatter)
 ```
 
 
@@ -188,9 +190,9 @@ by_lab <- all_habituation_data %>%
                                      n = tested,
                                      methods = "wilson")$upper)
 
-ggplot(by_lab,
-       aes(x = lab_id, y = chose_helper_mean,
-           ymin = ci_lower, ymax = ci_upper)) + 
+forest <- ggplot(by_lab,
+                 aes(x = lab_id, y = chose_helper_mean,
+                     ymin = ci_lower, ymax = ci_upper)) + 
   geom_point(aes(size = tested)) + 
   geom_linerange() + 
   coord_flip() + 
@@ -200,6 +202,7 @@ ggplot(by_lab,
   geom_hline(yintercept = .5, col = "black", lty = 2) + 
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
   theme(legend.position = "bottom")
+(forest)
 ```
 
 ### Bayesian Analysis
@@ -286,10 +289,10 @@ all_habituation_data.marginal_effects <- bayes_mod %>%
   rename(z_age_days = x,
          chose_helper_num = predicted)
 
-ggplot(all_habituation_data,
-       aes(x = z_age_days,
-           y = chose_helper_num,
-           group = 1)) +
+all_habituation_data.marginal_plot <- ggplot(all_habituation_data,
+                                             aes(x = z_age_days,
+                                                 y = chose_helper_num,
+                                                 group = 1)) +
   geom_line(data = all_habituation_data.marginal_effects) +
   geom_ribbon(alpha = .5, colour = NA,
               data = all_habituation_data.marginal_effects,
@@ -300,6 +303,7 @@ ggplot(all_habituation_data,
   scale_y_continuous(name = "Choice",
                      breaks = c(0, 1),
                      labels = c("Hinderer", "Helper"))
+(all_habituation_data.marginal_plot)
 ```
 
 ## Main Bayesian GLM analysis: model 2 (successful habituators) 
@@ -413,10 +417,10 @@ habituators_data.marginal_effects <- bayes_mod %>%
   rename(z_age_days = x,
          chose_helper_num = predicted)
 
-ggplot(habituators_data,
-       aes(x = z_age_days,
-           y = chose_helper_num,
-           group = 1)) +
+habituators_data.marginal_plot <- ggplot(habituators_data,
+                                         aes(x = z_age_days,
+                                             y = chose_helper_num,
+                                             group = 1)) +
   geom_line(data = habituators_data.marginal_effects) +
   geom_ribbon(alpha = .5, colour = NA,
               data = habituators_data.marginal_effects,
@@ -427,6 +431,7 @@ ggplot(habituators_data,
   scale_y_continuous(name = "Choice",
                      breaks = c(0, 1),
                      labels = c("Hinderer", "Helper"))
+(habituators_data.marginal_plot)
 ```
 
 ## ICCs for variability

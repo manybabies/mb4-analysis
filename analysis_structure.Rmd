@@ -118,10 +118,10 @@ We first produce some diagnostic plots. We then define the full Bayesian model a
 We can first check how infants in the two conditions performed in general depending on their age.
 
 ```{r age_plot}
-ggplot(data.sims,
-       aes(x = z_age_days,
-           y = chose_helper,
-           colour = condition)) +
+scatter <- ggplot(data.sims,
+                  aes(x = z_age_days,
+                      y = chose_helper,
+                      colour = condition)) +
   stat_smooth(method = "lm") +
   geom_point(position = position_jitter(height = .03, width = 0)) +
   xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
@@ -130,6 +130,7 @@ ggplot(data.sims,
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer", "Helper"))
+(scatter)
 ```
 
 We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
@@ -145,9 +146,9 @@ by_lab <- data.sims %>%
             ci_upper = binom.bayes(x = chose_helper, 
                                    n = tested)$upper)
 
-ggplot(by_lab,
-       aes(x = lab_id, colour = condition,
-           y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
+forest <- ggplot(by_lab,
+                 aes(x = lab_id, colour = condition,
+                     y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
   geom_hline(yintercept = .5, col = "black", lty = 2) + 
   geom_linerange(position = position_dodge(width = .5)) + 
   geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
@@ -157,6 +158,7 @@ ggplot(by_lab,
                       labels = c("non-social", "social")) +
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
   theme(legend.position = "bottom")
+(forest)
 ```
 
 ## Bayesian analysis
@@ -178,14 +180,14 @@ priors.full <- c(set_prior("normal(0, .1)",
 priors.noninformative <- set_prior("student_t(3, 0, 2)",
                                    class = "sd")
 # Run model
-brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days +
-                       (1 + condition + z_age_days | lab_id), 
+brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
                      family = bernoulli, data = data.sims,
                      prior = priors.full, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days +
-                          (1 + condition + z_age_days | lab_id), 
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
+                          (1 + condition + z_age_days + condition:z_age_days | lab_id), 
                         family = bernoulli, data = data.sims,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
@@ -263,14 +265,14 @@ priors.no_age <- c(set_prior("normal(0, .1)",
                  set_prior("student_t(3, 0, 2)",
                            class = "sd"))
 # Run model
-brm.info.no_age <- brm(chose_helper ~ 1 + condition +
-                       (1 + condition | lab_id), 
+brm.info.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
+                       (1 + condition + z_age_days | lab_id), 
                      family = bernoulli, data = data.sims,
                      prior = priors.no_age, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.no_age <- brm(chose_helper ~ 1 + condition +
-                          (1 + condition | lab_id), 
+brm.noninfo.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
+                          (1 + condition + z_age_days | lab_id), 
                         family = bernoulli, data = data.sims,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
