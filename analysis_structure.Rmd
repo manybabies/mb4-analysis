@@ -147,7 +147,8 @@ by_lab <- data.sims %>%
             ci_lower = binom.bayes(x = chose_helper, 
                                    n = tested)$lower,
             ci_upper = binom.bayes(x = chose_helper, 
-                                   n = tested)$upper)
+                                   n = tested)$upper) %>%
+  mutate(condition = factor(condition, c("social", "non_social")))
 
 forest <- ggplot(by_lab,
                  aes(x = lab_id, colour = condition,
