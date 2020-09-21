@@ -113,7 +113,7 @@ data.sims <- tibble(lab_id = sample(1:20, 250, replace = T)) %>%
 
 We first produce some diagnostic plots. We then define the full Bayesian model against which null models will be compared. Finally we address the two research questions: do infants in the social condition choose preferably the helper character, and does preference for either character change with age.
 
-## Diqgnostic plots
+## Diagnostic plots
 
 We can first check how infants in the two conditions performed in general depending on their age.
 
