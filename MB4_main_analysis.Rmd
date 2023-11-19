@@ -13,7 +13,7 @@ This is a copy of "analysis_structure.rmd" and is a work-in-progress.
 
 # Introduction
 
-In this document, we detail the pre-registered analysis plan for the MB4 study, and illustrate it with simulated data following the expectation drawn from Margoni and Surian (2018).
+In this document, we conduct and document the pre-registered analyses for the MB4 study.
 
 ```{r message=FALSE}
 library(tidyverse)
@@ -39,78 +39,59 @@ set.seed(705)
 
 knitr::opts_chunk$set(cache = TRUE)
 ```
-# Data simulations
 
-First, we need to generate data, using the estimated true effect size from a recent meta-analysis (Margoni & Surian, 2018) for the mean probability of choosing the helper versus hinderer character.
+# Data inspection
 
-To simulate lab variability, we use the effect sizes and Conf.Is reported for the studies analyzed by Margoni and Surian (2018). To simplify simulations, we make the conservative choice to assume 16 participants for each study when computing the standard deviation from Conf.Is. We then take the distribution of differences between those labs and the estimated true effect size from Margoni & Surian to define the between-lab variation for our simulated data. This is a necessary step as the estimated true effect size takes into account publication bias, amongst other factors, thus data simulations using directly the study-specific values would result in a bigger, less conservative simulated effect size.
+First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
 
-```{r lab_var}
-# Estimation from Margoni and Surian (2018)
-true_mean <- .64
-true_sd <- .1
+```{r data inspection}
+clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
 
-# Study-specific values
-lab_var <- tribble(
-  ~lab_id, ~est_mean, ~lower, ~upper,
-  "lab1",  .92, .80, .99,
-  "lab2",  .75, .54, .96,
-  "lab3",  .69, .51, .88,
-  "lab4",  .77, .60, .94,
-  "lab5",  .78, .63, .93,
-  "lab6",  .50, .36, .68,
-  "lab7",  .69, .50, .88,
-  "lab8",  .71, .55, .86,
-  "lab9",  .80, .66, .94,
-  "lab10", .71, .55, .86,
-  "lab11", .74, .54, .93,
-  "lab12", .78, .65, .91,
-  "lab13", .50, .37, .63,
-  "lab14", .61, .47, .75,
-  "lab15", .30, .02, .58,
-  "lab16", .56, .39, .73,
-  "lab17", .79, .63, .94,
-  "lab18", .94, .82, .99,
-  "lab19", .73, .54, .91,
-  "lab20", .50, .37, .63,
-  "lab21", .65, .48, .81,
-  "lab22", .75, .58, .92,
-  "lab23", .59, .38, .81,
-  "lab24", .80, .60, .99,
-  "lab25", .75, .57, .93,
-  "lab26", .61, .48, .75
-  ) %>%
-  mutate(CI_spread = (upper-lower)/2,
-         est_sd = CI_spread * sqrt(16) / 1.96)
 
-# Shape of the difference distributions
-sigma_mean <- sd(lab_var$est_mean)
-mu_sd <- mean(lab_var$est_sd)
-sigma_sd <- sd(lab_var$est_sd)
+usable_data <- clean_data %>%
+  filter(meet_eligibility == "Y",
+         exclude_session == "not_excluded")
+
+breakdown <- clean_data %>% 
+  group_by(meet_eligibility, exclude_session) %>%
+  summarize(n = n())
+breakdown # table breakdown of exclusions
+
+# Check for infants outside of age range
+
+age_check <- usable_data %>%
+  group_by(lab_id) %>%
+  summarize(min_age = min(age_days),
+            max_age = max(age_days))
+
+# Note: as of Nov 19, 2023, there seems to be entry error for the Yonsei lab
+# For now their data is excluded, but will be added later once it is corrected
+
+age_filtered_data <- usable_data %>%
+  filter(age_days < 330,## approximate upper limit of our age range of 10 months 15 days
+         age_days > 150) ## approximate lowe limit of our age range of 5 months 15 days
+
+age_check <- age_filtered_data %>%
+  group_by(lab_id) %>%
+  summarize(min_age = min(age_days),
+            max_age = max(age_days))
+
+# Check if any choices were entered as NA incorrectly
+
+choice_filtered_data <- age_filtered_data %>%
+  filter(is.na(helper_hinderer_choice) == F)
+
 ```
 
-We can then move on to simulating the entire dataset. We choose to simulate data coming from 20 different labs, for a total of 500 participants (minimum to reach 80% power), thus an average of 25 participants per lab. This is above the required minimum of 16 participants but seems sensible with respects to the variability in the number of participants collected observed in previous ManyBabies studies.
+We now prepare the clean data for the analyses to come. 
 
-```{r data_sims}
-# Define mean and sd choice for each lab
-# Lab sd and meta sd are very different, we take a value in the middle
-labs <- tibble(lab_id = 1:20,
-               pr_choice_lab = rnorm(20, true_mean, sigma_mean),
-               sd_choice_lab = rnorm(20, mean(true_sd, mu_sd), sigma_sd) %>% # Can be <0
-                 pmax(.05))
-# Simulate full dataset
-data.sims <- tibble(lab_id = sample(1:20, 250, replace = T)) %>%
-  left_join(labs) %>%
-  mutate(social = rnorm(250, pr_choice_lab, sd_choice_lab) %>% # Can give values outside [0,1]
-           pmin(1) %>% pmax(0),                                # Force back to [0,1]
-         non_social = rnorm(250, .5, sd_choice_lab) %>%
-           pmin(1) %>% pmax(0)) %>%
-  pivot_longer(c(social, non_social),
-               names_to = "condition",
-               values_to = "pr_choice") %>%
-  mutate(chose_helper = rbinom(500, 1, pr_choice),
-         age_days = sample(167:319, 500, replace = T),
-         z_age_days = scale(age_days))
+```{r data preparation}
+# organize data by choice, condition, and age for primary analysis
+
+primary_data <- choice_filtered_data %>%
+  mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 1, 0),
+         z_age_days = scale(age_days)) %>%
+  dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days)) 
 ```
 
 # Data analysis
@@ -122,7 +103,7 @@ We first produce some diagnostic plots. We then define the full Bayesian model a
 We can first check how infants in the two conditions performed in general depending on their age.
 
 ```{r age_plot}
-scatter <- ggplot(data.sims,
+scatter <- ggplot(primary_data,
                   aes(x = z_age_days,
                       y = chose_helper,
                       colour = condition)) +
@@ -131,7 +112,7 @@ scatter <- ggplot(data.sims,
              size = 1) +
   xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
   scale_colour_brewer(palette = "Dark2", name = "Condition",
-                      breaks = c("non_social", "social"),
+                      breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
@@ -143,7 +124,10 @@ ggsave("plots/simulations/age_scatter.pdf", scatter,
 We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
 
 ```{r lab_plot}
-by_lab <- data.sims %>%
+
+ucsb <- primary_data %>%
+  filter(lab_id == "childstudiesucsb")
+by_lab <- primary_data %>%
   group_by(lab_id, condition) %>%
   summarize(tested = n(),
             chose_helper_mean = mean(chose_helper), 
@@ -152,7 +136,7 @@ by_lab <- data.sims %>%
                                    n = tested)$lower,
             ci_upper = binom.bayes(x = chose_helper, 
                                    n = tested)$upper) %>%
-  mutate(condition = factor(condition, c("social", "non_social")))
+  mutate(condition = factor(condition, c("social", "nonsocial")))
 
 forest <- ggplot(by_lab,
                  aes(x = lab_id, colour = condition,
@@ -162,7 +146,7 @@ forest <- ggplot(by_lab,
   geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
   coord_flip() + xlab("Lab") + ylab("Proportion Choosing Helper/Push-up character") + ylim(0,1) + 
   scale_colour_brewer(palette = "Dark2", name = "Condition",
-                      breaks = c("non_social", "social"),
+                      breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
   theme(legend.position = "bottom")
@@ -192,13 +176,13 @@ priors.noninformative <- set_prior("student_t(3, 0, 2)",
 # Run model
 brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
                        (1 + condition + z_age_days + condition:z_age_days | lab_id), 
-                     family = bernoulli, data = data.sims,
+                     family = bernoulli, data = primary_data,
                      prior = priors.full, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
 brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
                           (1 + condition + z_age_days + condition:z_age_days | lab_id), 
-                        family = bernoulli, data = data.sims,
+                        family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
                         chains = 4, future = T, save_all_pars = TRUE)
