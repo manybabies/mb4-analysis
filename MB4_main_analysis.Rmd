@@ -1,0 +1,331 @@
+---
+title: "MB4 Main Analyses"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, & Francis Yuen"
+date: "11/19/2023"
+output:
+  pdf_document: default
+  html_document: default
+---
+### NOTE ###
+
+This is a copy of "analysis_structure.rmd" and is a work-in-progress.
+
+
+# Introduction
+
+In this document, we conduct and document the pre-registered analyses for the MB4 study.
+
+```{r message=FALSE}
+library(tidyverse)
+library(brms)
+library(binom)
+library(ICCbin)
+library(meta)
+library(lme4)
+library(here)
+library(knitr)
+library(bridgesampling)
+library(ggeffects)
+library(MCMCpack)
+library(coda)
+library(future)
+plan(multiprocess, workers = 4)
+
+source("StatTools.R")
+source("geom_flat_violin.R")
+
+theme_set(theme_bw(base_size = 10))
+set.seed(705)
+
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# Data inspection
+
+First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
+
+```{r data inspection}
+clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
+
+
+usable_data <- clean_data %>%
+  filter(meet_eligibility == "Y",
+         exclude_session == "not_excluded")
+
+breakdown <- clean_data %>% 
+  group_by(meet_eligibility, exclude_session) %>%
+  summarize(n = n())
+breakdown # table breakdown of exclusions
+
+# Check for infants outside of age range
+
+age_check <- usable_data %>%
+  group_by(lab_id) %>%
+  summarize(min_age = min(age_days),
+            max_age = max(age_days))
+
+# Note: as of Nov 19, 2023, there seems to be entry error for the Yonsei lab
+# For now their data is excluded, but will be added later once it is corrected
+
+age_filtered_data <- usable_data %>%
+  filter(age_days < 330,## approximate upper limit of our age range of 10 months 15 days
+         age_days > 150) ## approximate lowe limit of our age range of 5 months 15 days
+
+age_check <- age_filtered_data %>%
+  group_by(lab_id) %>%
+  summarize(min_age = min(age_days),
+            max_age = max(age_days))
+
+# Check if any choices were entered as NA incorrectly
+
+choice_filtered_data <- age_filtered_data %>%
+  filter(is.na(helper_hinderer_choice) == F)
+
+```
+
+We now prepare the clean data for the analyses to come. 
+
+```{r data preparation}
+# organize data by choice, condition, and age for primary analysis
+
+primary_data <- choice_filtered_data %>%
+  mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 1, 0),
+         z_age_days = scale(age_days)) %>%
+  dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days)) 
+```
+
+# Data analysis
+
+We first produce some diagnostic plots. We then define the full Bayesian model against which null models will be compared. Finally we address the two research questions: do infants in the social condition choose preferably the helper character, and does preference for either character change with age.
+
+## Diagnostic plots
+
+We can first check how infants in the two conditions performed in general depending on their age.
+
+```{r age_plot}
+scatter <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("plots/simulations/age_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
+
+```{r lab_plot}
+
+ucsb <- primary_data %>%
+  filter(lab_id == "childstudiesucsb")
+by_lab <- primary_data %>%
+  group_by(lab_id, condition) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.bayes(x = chose_helper, 
+                                   n = tested)$lower,
+            ci_upper = binom.bayes(x = chose_helper, 
+                                   n = tested)$upper) %>%
+  mutate(condition = factor(condition, c("social", "nonsocial")))
+
+forest <- ggplot(by_lab,
+                 aes(x = lab_id, colour = condition,
+                     y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  geom_linerange(position = position_dodge(width = .5)) + 
+  geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
+  coord_flip() + xlab("Lab") + ylab("Proportion Choosing Helper/Push-up character") + ylim(0,1) + 
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")
+ggsave("plots/simulations/forest.pdf", forest,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(forest)
+```
+
+## Bayesian analysis
+
+### Global Bayesian model
+
+We first need to define the full model that will be used throughout the Bayesian analysis, and define appropriate priors for this model. We define both a model with informative priors based on the meta-analysis by Margoni and Surian (2018), and a model with non-informative priors to check for the sensitivity of our results to the choice of priors. For the non-informative priors, we only specify a narrower prior for the random effects than the default one implemented in `brms` in order to improve model fit.
+
+```{r full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.full <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                           class = "b", coef = "conditionsocial"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+# Run model
+brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                     family = bernoulli, data = primary_data,
+                     prior = priors.full, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
+                          (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can already look at the parameter estimates and their 95% Credible Intervals from this model.
+
+```{r full_estimates, message=FALSE}
+brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
+
+```{r full_bridge}
+bridge.info.full <- bridge_sampler(brm.info.full, silent = T)
+bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
+```
+
+### Choice preference
+
+The first research question was whether or not infants in the social condition would chose the helper character more than infants in the non-social control condition, as evidenced by a greater-than-zero main effect of `condition`. To test this, we first define a null model, without the effect of interest. For the non-informative model, we use the same priors as for the full model.
+
+```{r nocondition_model, results=FALSE, message=FALSE}
+# Define priors
+priors.no_condition <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+# Run model
+brm.info.no_condition <- brm(chose_helper ~ 1 + z_age_days +
+                       (1 + z_age_days | lab_id), 
+                     family = bernoulli, data = data.sims,
+                     prior = priors.no_condition, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.no_condition <- brm(chose_helper ~ 1 + z_age_days +
+                          (1 + z_age_days | lab_id), 
+                        family = bernoulli, data = data.sims,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
+
+```{r bayes_nointercept}
+# Bridge-sample posterior
+bridge.info.no_condition <- bridge_sampler(brm.info.no_condition, silent = T)
+bridge.noninfo.no_condition <- bridge_sampler(brm.noninfo.no_condition, silent = T)
+# Compute Bayes factors
+bf.info.intercept <- bf(bridge.info.full, bridge.info.no_condition)
+bf.noninfo.intercept <- bf(bridge.noninfo.full, bridge.noninfo.no_condition)
+```
+
+We can see that, with informative priors, we obtain a BF = `r bf.info.intercept$bf` in favour of the full model, and a BF = `r bf.noninfo.intercept$bf` with non-informative priors.
+
+### Effect of age
+
+The second research question we had was whether or not choice preference changed with age. To test this, we define a null model that does not have a main effect of `z_age_days` and compare it to the full model.
+
+```{r no_age, results=FALSE, message=FALSE}
+# Define priors
+priors.no_age <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                           class = "b", coef = "conditionsocial"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+# Run model
+brm.info.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
+                       (1 + condition + z_age_days | lab_id), 
+                     family = bernoulli, data = data.sims,
+                     prior = priors.no_age, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
+                          (1 + condition + z_age_days | lab_id), 
+                        family = bernoulli, data = data.sims,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+# Bridge-sample posterior
+bridge.info.no_age <- bridge_sampler(brm.info.no_age, silent = T)
+bridge.noninfo.no_age <- bridge_sampler(brm.noninfo.no_age, silent = T)
+# Compute Bayes factors
+bf.info.age <- bf(bridge.info.full, bridge.info.no_age)
+bf.noninfo.age <- bf(bridge.noninfo.full, bridge.noninfo.no_age)
+```
+
+We can see that, with informative priors, we obtain a BF = `r bf.info.age$bf` in favour of the null model, and a BF = `r bf.noninfo.age$bf` with non-informative priors.
+
+### Bayesian marginal effects
+
+We plot the initial scatter plot by age with estimates from our full, informative Bayesian model.
+
+```{r marginal_plot, results=FALSE, message=FALSE}
+# Compute marginal effects
+marginal_effects <- brm.info.full %>%
+  ggpredict(terms = c("z_age_days [all]", "condition")) %>%
+  rename(z_age_days = x,
+         chose_helper = predicted,
+         condition = group)
+
+# Plot data and marginal effects
+scatter.bayes <- ggplot(data.sims,
+                  aes(x = z_age_days,
+                      y = chose_helper,
+                      colour = condition,
+                      fill = condition)) +
+  geom_line(data = marginal_effects) +
+  geom_ribbon(alpha = .5, colour = NA,
+              data = marginal_effects,
+              aes(ymin = conf.low,
+                  ymax = conf.high)) +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("non_social", "social"),
+                      labels = c("non-social", "social")) +
+  scale_fill_brewer(palette = "Dark2", name = "Condition",
+                    breaks = c("non_social", "social"),
+                    labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("plots/simulations/age_scatter_bayes.pdf", scatter.bayes,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter.bayes)
+```
+
+## Lab variety analysis: ICCs
+
+To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
+
+```{r icc}
+icc <- iccbin(cid = lab_id, y = chose_helper, 
+              data = data.sims,
+              alpha = 0.05)
+```
