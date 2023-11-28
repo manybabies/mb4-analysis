@@ -1,6 +1,6 @@
 ---
 title: "MB4 Main Analyses"
-author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, & Francis Yuen"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, & Francis Yuen"
 date: "11/19/2023"
 output:
   pdf_document: default
@@ -8,7 +8,7 @@ output:
 ---
 ### NOTE ###
 
-This is a copy of "analysis_structure.rmd" and is a work-in-progress.
+This is a revised version of "MB4_pilot_analysis.rmd".
 
 
 # Introduction
@@ -29,7 +29,7 @@ library(ggeffects)
 library(MCMCpack)
 library(coda)
 library(future)
-plan(multiprocess, workers = 4)
+#plan(multiprocess, workers = 4)
 
 source("StatTools.R")
 source("geom_flat_violin.R")
@@ -42,11 +42,181 @@ knitr::opts_chunk$set(cache = TRUE)
 
 # Data inspection
 
-First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
+Calculate the habituation trial number and whether there's an error during stimuli presentation
 
-```{r data inspection}
+```{r message=FALSE}
 clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
 
+num <- dim(clean_data)[1]
+clean_datanew <- matrix(0, nrow = num, ncol = 14)
+
+for (j in 1:num)
+{
+  for (k in 1:12)
+  {
+    clean_datanew[j,k] <- as.numeric(clean_data[j,4*k-1+46])
+    clean_datanew[j,k+1] <- as.numeric(clean_data[j,4*(k+1)-1+46])
+    clean_datanew[j,k+2] <- as.numeric(clean_data[j,4*(k+2)-1+46])
+  }
+}
+
+clean_datanum <- matrix(as.numeric(clean_datanew),nc=14)
+ 
+
+# habituation or not
+for (j in 1:num)
+  
+{
+  clean_data[j,103]=15
+  for (k in 1:4)
+  {
+    if (((clean_datanum[j,k]+clean_datanum[j,k+1]+clean_datanum[j,k+2])>12)&!is.na(clean_datanum[j,k])&!is.na(clean_datanum[j,k+1])&!is.na(clean_datanum[j,k+2]))
+    {
+      hab_crt = (clean_datanum[j,k]+clean_datanum[j,k+1]+clean_datanum[j,k+2])/2
+      break
+    }
+    else
+    {hab_crt = 0}
+    
+    
+  }
+  
+  
+  for (i in 1:12)
+  {
+    
+  
+    if (!is.na(clean_datanum[j,i+2])&!is.na(clean_datanum[j,i+1])&!is.na(clean_datanum[j,i])) 
+      
+    {
+      sumcrt = clean_datanum[j,i]+clean_datanum[j,i+1]+clean_datanum[j,i+2]
+      #print(sumcrt)
+      if (sumcrt< hab_crt) 
+      {
+        clean_data[j,103]=i+2
+      }
+      
+    }
+    
+  }
+  
+}
+colnames(clean_data)[103]="hab_trial_num"
+
+clean_data[1:num,104]=0 
+
+for (j in 1:num)
+{
+  m = as.numeric(clean_data[j,103])
+  
+  if(m<14)
+  {
+  if(is.na(clean_datanew[j,m+1]))
+  {
+    clean_data[j,104]=1 
+  }
+  }
+  else
+  {
+    clean_data[j,104]=1
+  }
+}
+
+colnames(clean_data)[104]="no_error"
+
+```
+
+## Sanity checks
+
+First, we perform some checks for whether there are user-level errors in the data
+
+```{r sanity checking user errors, message = FALSE}
+# checking that all labs are merged successfully
+
+lablist <- read_csv(here("main_data", "contributing_lab_list.csv")) 
+
+nrow(lablist)
+
+labcounts <- clean_data %>%
+  group_by(lab_id) %>%
+  summarize(contributed_n = n())
+
+nrow(labcounts)
+
+# checking for potential data entry errors
+## checking for duplicates in looking time at freeze frame
+
+num <- dim(clean_data)[1]
+lt_matrix <- matrix(0, nrow = num, ncol = 14)
+
+for (j in 1:num)
+{
+  for (k in 1:12)
+  {
+    lt_matrix[j,k] <- as.numeric(clean_data[j,4*k-1+46])
+    lt_matrix[j,k+1] <- as.numeric(clean_data[j,4*(k+1)-1+46])
+    lt_matrix[j,k+2] <- as.numeric(clean_data[j,4*(k+2)-1+46])
+  }
+}
+
+lt_matrix <- as.data.frame(lt_matrix) %>%
+  filter(is.na(V1) == F)
+
+sum(duplicated(lt_matrix))
+
+lt_duplicates <- lt_matrix %>%
+  filter(duplicated(lt_matrix) == T) %>%
+  rename(trial1_lookingtime_freezeframe = V1)
+
+find_duplicate <- clean_data %>%
+  dplyr::select(c(lab_id, subj_id, trial1_lookingtime_freezeframe)) %>%
+  right_join(lt_duplicates) # Note: reached out to lab about duplicate entry
+
+# checking cb order matches with entry
+
+cb_orders <- read_csv(here("main_data", "cb_orders.csv"))
+
+cb_checks <- clean_data %>%
+  dplyr::select(c(lab_id, subj_id, cb_order, condition, push_up_identity, push_up_order, push_up_side)) %>%
+  left_join(cb_orders,
+            by = "cb_order") %>%
+  mutate(condition_match = ifelse(correct_condition == condition, T, F),
+         pushup_identity_match = ifelse(correct_push_up_identity == push_up_identity, T, F),
+         push_up_order_match = ifelse(correct_push_up_order == push_up_order, T, F),
+         push_up_side_match = ifelse(correct_push_up_side == push_up_side, T, F))
+
+cb_checks_summary <- cb_checks %>%
+  group_by(condition_match, pushup_identity_match, push_up_order_match, push_up_side_match) %>%
+  summarize(n = n()) # some mismatches to be isolated
+
+cb_checks_isolated <- cb_checks %>%
+  filter(condition_match == F | pushup_identity_match == F | push_up_order_match == F | push_up_side_match == F)
+
+cb_checks_na <- cb_checks %>%
+  filter(is.na(condition_match) == T) # 2 excluded infants; condition info NA because of equipment malfunction
+
+
+  
+## Checking if the helper/hinderer choice column was correctly entered
+
+helper_check <- clean_data %>%
+  filter(character_choice != "none") %>% # do not need to include no choice babies for this check
+  mutate(correct_choice = ifelse(character_choice == push_up_identity, "helper", "hinderer"),
+         helper_hinderer_match = ifelse(correct_choice == helper_hinderer_choice, T, F))
+
+helper_check_isolate <- helper_check %>%
+  filter(helper_hinderer_match != T) %>%
+  dplyr::select(c(lab_id, subj_id, push_up_identity, character_choice, helper_hinderer_choice, correct_choice)) # reached out to labs
+
+
+
+```
+
+
+
+First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
+
+```{r data inspection, message = FALSE}
 
 usable_data <- clean_data %>%
   filter(meet_eligibility == "Y",
@@ -83,6 +253,9 @@ choice_filtered_data <- age_filtered_data %>%
 
 ```
 
+
+
+
 We now prepare the clean data for the analyses to come. 
 
 ```{r data preparation}
@@ -92,6 +265,8 @@ primary_data <- choice_filtered_data %>%
   mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 1, 0),
          z_age_days = scale(age_days)) %>%
   dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days)) 
+
+primary_data$hab <- ifelse(primary_data$hab_trial_num==15,0,1)
 ```
 
 # Data analysis
@@ -102,7 +277,7 @@ We first produce some diagnostic plots. We then define the full Bayesian model a
 
 We can first check how infants in the two conditions performed in general depending on their age.
 
-```{r age_plot}
+```{r age_plot, message=FALSE}
 scatter <- ggplot(primary_data,
                   aes(x = z_age_days,
                       y = chose_helper,
@@ -123,10 +298,7 @@ ggsave("plots/simulations/age_scatter.pdf", scatter,
 
 We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
 
-```{r lab_plot}
-
-ucsb <- primary_data %>%
-  filter(lab_id == "childstudiesucsb")
+```{r lab_plot, message=FALSE}
 by_lab <- primary_data %>%
   group_by(lab_id, condition) %>%
   summarize(tested = n(),
@@ -167,12 +339,14 @@ priors.full <- c(set_prior("normal(0, .1)",
                            class = "Intercept"),
                  set_prior("normal(0, .5)",
                            class = "b"),
-                 set_prior("normal(.5753641, .1)", # From Margoni & Surian, through logit
+                 set_prior("normal(.5754, .1)",
+                           # From Margoni & Surian (64%), logit(.64) = .5754 
                            class = "b", coef = "conditionsocial"),
                  set_prior("student_t(3, 0, 2)",
                            class = "sd"))
 priors.noninformative <- set_prior("student_t(3, 0, 2)",
                                    class = "sd")
+
 # Run model
 brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
                        (1 + condition + z_age_days + condition:z_age_days | lab_id), 
@@ -190,7 +364,7 @@ brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_
 
 We can already look at the parameter estimates and their 95% Credible Intervals from this model.
 
-```{r full_estimates, message=FALSE}
+```{r full_estimates of each parameter, message=FALSE}
 brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
@@ -199,7 +373,7 @@ brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
 
 Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
 
-```{r full_bridge}
+```{r full_bridge, message=FALSE}
 bridge.info.full <- bridge_sampler(brm.info.full, silent = T)
 bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
 ```
@@ -219,13 +393,13 @@ priors.no_condition <- c(set_prior("normal(0, .1)",
 # Run model
 brm.info.no_condition <- brm(chose_helper ~ 1 + z_age_days +
                        (1 + z_age_days | lab_id), 
-                     family = bernoulli, data = data.sims,
+                     family = bernoulli, data = primary_data,
                      prior = priors.no_condition, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
 brm.noninfo.no_condition <- brm(chose_helper ~ 1 + z_age_days +
                           (1 + z_age_days | lab_id), 
-                        family = bernoulli, data = data.sims,
+                        family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
                         chains = 4, future = T, save_all_pars = TRUE)
@@ -233,16 +407,17 @@ brm.noninfo.no_condition <- brm(chose_helper ~ 1 + z_age_days +
 
 We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
 
-```{r bayes_nointercept}
+```{r bayes_nocondition message=FALSE}
 # Bridge-sample posterior
 bridge.info.no_condition <- bridge_sampler(brm.info.no_condition, silent = T)
 bridge.noninfo.no_condition <- bridge_sampler(brm.noninfo.no_condition, silent = T)
 # Compute Bayes factors
-bf.info.intercept <- bf(bridge.info.full, bridge.info.no_condition)
-bf.noninfo.intercept <- bf(bridge.noninfo.full, bridge.noninfo.no_condition)
+bf.info.condition <- bf(bridge.info.full, bridge.info.no_condition)
+bf.noninfo.condition <- bf(bridge.noninfo.full, bridge.noninfo.no_condition)
+print(bf.info.condition)
+print(bf.noninfo.condition)
 ```
 
-We can see that, with informative priors, we obtain a BF = `r bf.info.intercept$bf` in favour of the full model, and a BF = `r bf.noninfo.intercept$bf` with non-informative priors.
 
 ### Effect of age
 
@@ -261,25 +436,30 @@ priors.no_age <- c(set_prior("normal(0, .1)",
 # Run model
 brm.info.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
                        (1 + condition + z_age_days | lab_id), 
-                     family = bernoulli, data = data.sims,
+                     family = bernoulli, data = primary_data,
                      prior = priors.no_age, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
 brm.noninfo.no_age <- brm(chose_helper ~ 1 + condition + z_age_days +
                           (1 + condition + z_age_days | lab_id), 
-                        family = bernoulli, data = data.sims,
+                        family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
                         chains = 4, future = T, save_all_pars = TRUE)
+```
+
+
+```{r no_age Bayes factor, message=FALSE}
 # Bridge-sample posterior
 bridge.info.no_age <- bridge_sampler(brm.info.no_age, silent = T)
 bridge.noninfo.no_age <- bridge_sampler(brm.noninfo.no_age, silent = T)
 # Compute Bayes factors
 bf.info.age <- bf(bridge.info.full, bridge.info.no_age)
 bf.noninfo.age <- bf(bridge.noninfo.full, bridge.noninfo.no_age)
+print(bf.info.age)
+print(bf.noninfo.age)
 ```
 
-We can see that, with informative priors, we obtain a BF = `r bf.info.age$bf` in favour of the null model, and a BF = `r bf.noninfo.age$bf` with non-informative priors.
 
 ### Bayesian marginal effects
 
@@ -294,7 +474,7 @@ marginal_effects <- brm.info.full %>%
          condition = group)
 
 # Plot data and marginal effects
-scatter.bayes <- ggplot(data.sims,
+scatter.bayes <- ggplot(primary_data,
                   aes(x = z_age_days,
                       y = chose_helper,
                       colour = condition,
@@ -308,24 +488,342 @@ scatter.bayes <- ggplot(data.sims,
              size = 1) +
   xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
   scale_colour_brewer(palette = "Dark2", name = "Condition",
-                      breaks = c("non_social", "social"),
+                      breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
   scale_fill_brewer(palette = "Dark2", name = "Condition",
-                    breaks = c("non_social", "social"),
+                    breaks = c("nonsocial", "social"),
                     labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
 ggsave("plots/simulations/age_scatter_bayes.pdf", scatter.bayes,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter.bayes)
+
+
 ```
 
 ## Lab variety analysis: ICCs
 
 To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
 
-```{r icc}
+```{r icc message=FALSE}
 icc <- iccbin(cid = lab_id, y = chose_helper, 
-              data = data.sims,
+              data = primary_data,
               alpha = 0.05)
+print(icc)
+```
+
+### Choice preference (social condition)
+
+Examine whether infants prefer helper over hinder in the social condition
+
+```{r social condition, results=FALSE, message=FALSE}
+# select data
+social_data <- subset(primary_data,condition == "social")
+# Define priors
+priors.single <- c(set_prior("normal(.5753641, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+# Run model
+brm.info.single.full <- brm(chose_helper ~ 1 + z_age_days +
+                       (1 + z_age_days | lab_id), 
+                     family = bernoulli, data = social_data,
+                     prior = priors.single, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.info.single.no_intercept <- brm(chose_helper ~ z_age_days +
+                       (z_age_days | lab_id), 
+                     family = bernoulli, data = social_data,
+                     prior = priors.single, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.single.full <- brm(chose_helper ~ 1 + z_age_days +
+                       (1 + z_age_days | lab_id), 
+                     family = bernoulli, data = social_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.single.no_intercept <- brm(chose_helper ~ z_age_days +
+                       (z_age_days | lab_id), 
+                     family = bernoulli, data = social_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r social condition Bayes factor, message=FALSE}
+# Bridge-sample posterior
+bridge.info.single.full <- bridge_sampler(brm.info.single.full, silent = T)
+bridge.info.single.no_intercept <- bridge_sampler(brm.info.single.no_intercept, silent = T)
+bridge.noninfo.single.full <- bridge_sampler(brm.noninfo.single.full, silent = T)
+bridge.noninfo.single.no_intercept <- bridge_sampler(brm.noninfo.single.no_intercept, silent = T)
+
+# Compute Bayes factors
+bf.info.single.intercept <- bf(bridge.info.single.full, bridge.info.single.no_intercept)
+bf.noninfo.single.intercept <- bf(bridge.noninfo.single.full, bridge.noninfo.single.no_intercept)
+print(bf.info.single.intercept)
+print(bf.noninfo.single.intercept)
+```
+```{r social condition parameters, message=FALSE}
+brm.info.single.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.single.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+# Data analysis separating habituated and nonhabituated infants
+
+## Plot (habituated vs. nonhabituated)
+
+```{r habituation_plot}
+scatter <- ggplot(primary_data,
+                  aes(x = hab,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Habituation trial") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("plots/simulations/hab_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+
+## Bayesian analysis
+
+### Bayesian model adding habituation
+
+The interaction between habituation and condition was added to the full model.
+
+```{r full_model_habituation, results=FALSE, message=FALSE}
+# Define priors
+priors.full <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("normal(.5754, .1)",
+                           # From Margoni & Surian (64%), logit(.64) = .5754 
+                           # From Yiyi's meta-analysis of non-social(39%),
+                           # logit(.39) = -0.4473
+                           # social vs. nonsocial = .5754-(-.4473) = 1.0227
+                           class = "b", coef = "conditionsocial"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+# Run model
+brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:hab + condition:z_age_days +
+                       (1 + condition + hab + condition:hab + z_age_days + condition:z_age_days | lab_id), 
+                     family = bernoulli, data = primary_data,
+                     prior = priors.full, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:hab + condition:z_age_days +
+                       (1 + condition + hab+ condition:hab + z_age_days + condition:z_age_days | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can already look at the parameter estimates and their 95% Credible Intervals from this model.
+
+```{r full_estimates, message=FALSE}
+brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
+
+```{r full_bridge_habituation}
+bridge.info.full <- bridge_sampler(brm.info.full, silent = T)
+bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
+```
+
+### Choice preference * Habituation
+
+Calculate the BF for habituation:condition
+
+```{r nohabcondition_model, results=FALSE, message=FALSE}
+# Define priors
+priors.no_condition <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+# Run model
+brm.info.no_hab <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:z_age_days +
+                       (1 + condition + hab +  z_age_days + condition:z_age_days | lab_id), 
+                     family = bernoulli, data = primary_data,
+                     prior = priors.no_condition, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.no_hab <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:z_age_days +
+                       (1 + condition + hab +  z_age_days + condition:z_age_days | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
+
+```{r bayes_nohabcondition}
+# Bridge-sample posterior
+bridge.info.no_hab <- bridge_sampler(brm.info.no_hab, silent = T)
+bridge.noninfo.no_hab <- bridge_sampler(brm.noninfo.no_hab, silent = T)
+# Compute Bayes factors
+bf.info.hab <- bf(bridge.info.full, bridge.info.no_hab)
+bf.noninfo.hab <- bf(bridge.noninfo.full, bridge.noninfo.no_hab)
+print(bf.info.hab)
+print(bf.noninfo.hab)
+
+```
+
+### Choice preference when habituated
+
+Examine whether infants preferred helper more in the social condition than in the non-social condition when they were habituated 
+
+```{r habituaed, results=FALSE, message=FALSE}
+# select data
+hab_data <- subset(primary_data,hab == 1)
+# Define priors
+priors.no_condition <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+# Run model
+brm.info.hab.full <- brm(chose_helper ~ 1 + z_age_days + condition +
+                       (1 + z_age_days + condition| lab_id), 
+                     family = bernoulli, data = hab_data,
+                     prior = priors.full, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.info.hab.no_condition <- brm(chose_helper ~ 1 + z_age_days  + 
+                       (1+ z_age_days | lab_id), 
+                     family = bernoulli, data = hab_data,
+                     prior = priors.no_condition, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.hab.full <- brm(chose_helper ~ 1 + z_age_days  + condition+
+                       (1 + z_age_days  + condition| lab_id), 
+                     family = bernoulli, data = hab_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.hab.no_condition <- brm(chose_helper ~ 1 + z_age_days  + 
+                       (1+ z_age_days | lab_id), 
+                     family = bernoulli, data = hab_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+
+```
+
+```{r habituated condition Bayes factor, results=FALSE, message=FALSE}
+# Bridge-sample posterior
+bridge.info.hab.full <- bridge_sampler(brm.info.hab.full, silent = T)
+bridge.info.hab.no_condition <- bridge_sampler(brm.info.hab.no_condition, silent = T)
+bridge.noninfo.hab.full <- bridge_sampler(brm.noninfo.hab.full, silent = T)
+bridge.noninfo.hab.no_condition <- bridge_sampler(brm.noninfo.hab.no_condition, silent = T)
+
+# Compute Bayes factors
+bf.info.hab.condition <- bf(bridge.info.hab.full, bridge.info.hab.no_condition)
+bf.noninfo.hab.condition <- bf(bridge.noninfo.hab.full, bridge.noninfo.hab.no_condition)
+print(bf.info.hab.condition)
+print(bf.noninfo.hab.condition)
+
+```
+
+```{r habituated condition parameters, results=FALSE, message=FALSE}
+brm.info.hab.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.hab.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+
+```
+
+### Choice preference when not habituated
+
+Examine whether infants preferre helper more in the social condition than in the non-social condition when they were not habituated 
+
+```{r nonhabituaed, results=FALSE, message=FALSE}
+# select data
+nonhab_data <- subset(primary_data,hab == 0)
+# Define priors
+priors.no_condition <- c(set_prior("normal(0, .1)",
+                           class = "Intercept"),
+                 set_prior("normal(0, .5)",
+                           class = "b"),
+                 set_prior("student_t(3, 0, 2)",
+                           class = "sd"))
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+# Run model
+brm.info.nonhab.full <- brm(chose_helper ~ 1 + z_age_days + condition +
+                       (1 + z_age_days + condition| lab_id), 
+                     family = bernoulli, data = nonhab_data,
+                     prior = priors.full, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.info.nonhab.no_condition <- brm(chose_helper ~ 1 + z_age_days  + 
+                       (1+ z_age_days | lab_id), 
+                     family = bernoulli, data = nonhab_data,
+                     prior = priors.no_condition, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.nonhab.full <- brm(chose_helper ~ 1 + z_age_days  + condition+
+                       (1 + z_age_days  + condition| lab_id), 
+                     family = bernoulli, data = nonhab_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.nonhab.no_condition <- brm(chose_helper ~ 1 + z_age_days  + 
+                       (1+ z_age_days | lab_id), 
+                     family = bernoulli, data = nonhab_data,
+                     prior = priors.noninformative, iter = 10000, 
+                     control = list(adapt_delta = .99, max_treedepth = 20),
+                     chains = 4, future = T, save_all_pars = TRUE)
+
+```
+
+```{r nonhabituated condition Bayes factor, results=FALSE, message=FALSE}
+# Bridge-sample posterior
+bridge.info.nonhab.full <- bridge_sampler(brm.info.nonhab.full, silent = T)
+bridge.info.nonhab.no_condition <- bridge_sampler(brm.info.nonhab.no_condition, silent = T)
+bridge.noninfo.nonhab.full <- bridge_sampler(brm.noninfo.nonhab.full, silent = T)
+bridge.noninfo.nonhab.no_condition <- bridge_sampler(brm.noninfo.nonhab.no_condition, silent = T)
+
+# Compute Bayes factors
+bf.info.nonhab.condition <- bf(bridge.info.nonhab.full, bridge.info.nonhab.no_condition)
+bf.noninfo.nonhab.condition <- bf(bridge.noninfo.nonhab.full, bridge.noninfo.nonhab.no_condition)
+print(bf.info.nonhab.condition)
+print(bf.noninfo.nonhab.condition)
+
+```
+
+```{r nonhabituated condition parameters, message=FALSE}
+brm.info.nonhab.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+brm.noninfo.nonhab.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
 ```
