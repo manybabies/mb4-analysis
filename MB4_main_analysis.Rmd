@@ -45,7 +45,7 @@ knitr::opts_chunk$set(cache = TRUE)
 Calculate the habituation trial number and whether there's an error during stimuli presentation
 
 ```{r message=FALSE}
-clean_data <- read_csv("clean_data.csv") ### This needs to be downloaded from OSF
+clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
 
 num <- dim(clean_data)[1]
 clean_datanew <- matrix(0, nrow = num, ncol = 14)
@@ -126,11 +126,97 @@ colnames(clean_data)[104]="no_error"
 
 ```
 
+## Sanity checks
+
+First, we perform some checks for whether there are user-level errors in the data
+
+```{r sanity checking user errors, message = FALSE}
+# checking that all labs are merged successfully
+
+lablist <- read_csv(here("main_data", "contributing_lab_list.csv")) 
+
+nrow(lablist)
+
+labcounts <- clean_data %>%
+  group_by(lab_id) %>%
+  summarize(contributed_n = n())
+
+nrow(labcounts)
+
+# checking for potential data entry errors
+## checking for duplicates in looking time at freeze frame
+
+num <- dim(clean_data)[1]
+lt_matrix <- matrix(0, nrow = num, ncol = 14)
+
+for (j in 1:num)
+{
+  for (k in 1:12)
+  {
+    lt_matrix[j,k] <- as.numeric(clean_data[j,4*k-1+46])
+    lt_matrix[j,k+1] <- as.numeric(clean_data[j,4*(k+1)-1+46])
+    lt_matrix[j,k+2] <- as.numeric(clean_data[j,4*(k+2)-1+46])
+  }
+}
+
+lt_matrix <- as.data.frame(lt_matrix) %>%
+  filter(is.na(V1) == F)
+
+sum(duplicated(lt_matrix))
+
+lt_duplicates <- lt_matrix %>%
+  filter(duplicated(lt_matrix) == T) %>%
+  rename(trial1_lookingtime_freezeframe = V1)
+
+find_duplicate <- clean_data %>%
+  dplyr::select(c(lab_id, subj_id, trial1_lookingtime_freezeframe)) %>%
+  right_join(lt_duplicates) # Note: reached out to lab about duplicate entry
+
+# checking cb order matches with entry
+
+cb_orders <- read_csv(here("main_data", "cb_orders.csv"))
+
+cb_checks <- clean_data %>%
+  dplyr::select(c(lab_id, subj_id, cb_order, condition, push_up_identity, push_up_order, push_up_side)) %>%
+  left_join(cb_orders,
+            by = "cb_order") %>%
+  mutate(condition_match = ifelse(correct_condition == condition, T, F),
+         pushup_identity_match = ifelse(correct_push_up_identity == push_up_identity, T, F),
+         push_up_order_match = ifelse(correct_push_up_order == push_up_order, T, F),
+         push_up_side_match = ifelse(correct_push_up_side == push_up_side, T, F))
+
+cb_checks_summary <- cb_checks %>%
+  group_by(condition_match, pushup_identity_match, push_up_order_match, push_up_side_match) %>%
+  summarize(n = n()) # some mismatches to be isolated
+
+cb_checks_isolated <- cb_checks %>%
+  filter(condition_match == F | pushup_identity_match == F | push_up_order_match == F | push_up_side_match == F)
+
+cb_checks_na <- cb_checks %>%
+  filter(is.na(condition_match) == T) # 2 excluded infants; condition info NA because of equipment malfunction
+
+
+  
+## Checking if the helper/hinderer choice column was correctly entered
+
+helper_check <- clean_data %>%
+  filter(character_choice != "none") %>% # do not need to include no choice babies for this check
+  mutate(correct_choice = ifelse(character_choice == push_up_identity, "helper", "hinderer"),
+         helper_hinderer_match = ifelse(correct_choice == helper_hinderer_choice, T, F))
+
+helper_check_isolate <- helper_check %>%
+  filter(helper_hinderer_match != T) %>%
+  dplyr::select(c(lab_id, subj_id, push_up_identity, character_choice, helper_hinderer_choice, correct_choice)) # reached out to labs
+
+
+
+```
+
+
+
 First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
 
 ```{r data inspection, message = FALSE}
-clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
-
 
 usable_data <- clean_data %>%
   filter(meet_eligibility == "Y",
@@ -166,6 +252,9 @@ choice_filtered_data <- age_filtered_data %>%
   filter(is.na(helper_hinderer_choice) == F)
 
 ```
+
+
+
 
 We now prepare the clean data for the analyses to come. 
 
