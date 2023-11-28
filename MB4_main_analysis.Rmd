@@ -172,6 +172,11 @@ find_duplicate <- clean_data %>%
   dplyr::select(c(lab_id, subj_id, trial1_lookingtime_freezeframe)) %>%
   right_join(lt_duplicates) # Note: reached out to lab about duplicate entry
 
+# As of Nov 28, 2023, this subj needs to be removed
+
+entry_exclude <- find_duplicate %>%
+  dplyr::select(c(lab_id, subj_id))
+
 # checking cb order matches with entry
 
 cb_orders <- read_csv(here("main_data", "cb_orders.csv"))
@@ -192,11 +197,17 @@ cb_checks_summary <- cb_checks %>%
 cb_checks_isolated <- cb_checks %>%
   filter(condition_match == F | pushup_identity_match == F | push_up_order_match == F | push_up_side_match == F)
 
+# These mismatches need to be excluded for now until corrected
+
+entry_exclude_list <- cb_checks_isolated %>%
+  dplyr::select(c(lab_id, subj_id)) %>%
+  rbind(entry_exclude) %>%
+  mutate(entry_exclude = "Y")
+
 cb_checks_na <- cb_checks %>%
   filter(is.na(condition_match) == T) # 2 excluded infants; condition info NA because of equipment malfunction
 
 
-  
 ## Checking if the helper/hinderer choice column was correctly entered
 
 helper_check <- clean_data %>%
@@ -206,10 +217,16 @@ helper_check <- clean_data %>%
 
 helper_check_isolate <- helper_check %>%
   filter(helper_hinderer_match != T) %>%
-  dplyr::select(c(lab_id, subj_id, push_up_identity, character_choice, helper_hinderer_choice, correct_choice)) # reached out to labs
+  dplyr::select(c(lab_id, subj_id, push_up_identity, character_choice, helper_hinderer_choice, correct_choice))
 
+```
+Temporarily remove entry errors
 
-
+```{r remove entry errors, message = FALSE}
+clean_data <- clean_data %>%
+  left_join(entry_exclude_list) %>%
+  filter(is.na(entry_exclude) == T) %>%
+  dplyr::select(-entry_exclude)
 ```
 
 
@@ -266,7 +283,7 @@ primary_data <- choice_filtered_data %>%
          z_age_days = scale(age_days)) %>%
   dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days)) 
 
-primary_data$hab <- ifelse(primary_data$hab_trial_num==15,0,1)
+primary_data$hab <- ifelse(primary_data$hab_trial_num==15,0,1) ## This line of code isn't working but not sure why - Francis
 ```
 
 # Data analysis
