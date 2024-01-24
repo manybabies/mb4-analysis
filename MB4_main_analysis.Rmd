@@ -3,19 +3,19 @@ title: "MB4 Main Analyses"
 author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, & Francis Yuen"
 date: "11/19/2023"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 ### NOTE ###
 
 This is a revised version of "MB4_pilot_analysis.rmd".
-
+Last updated: January 23rd, 2024
 
 # Introduction
 
 In this document, we conduct and document the pre-registered analyses for the MB4 study.
 
-```{r message=FALSE}
+```{r load packages, message=FALSE}
 library(tidyverse)
 library(brms)
 library(binom)
@@ -42,91 +42,516 @@ knitr::opts_chunk$set(cache = TRUE)
 
 # Data inspection
 
-Calculate the habituation trial number and whether there's an error during stimuli presentation
+In this section, we calculate exclusion rates for the various exclusion reasons.
 
-```{r message=FALSE}
-clean_data <- read_csv(here("main_data", "clean_data.csv")) ### This needs to be downloaded from OSF
 
-num <- dim(clean_data)[1]
-clean_datanew <- matrix(0, nrow = num, ncol = 14)
+```{r load data, message=FALSE}
+clean_data <- read_csv(here("main_data", "clean_data.csv")) # This needs to be downloaded from OSF
 
-for (j in 1:num)
-{
-  for (k in 1:12)
-  {
-    clean_datanew[j,k] <- as.numeric(clean_data[j,4*k-1+46])
-    clean_datanew[j,k+1] <- as.numeric(clean_data[j,4*(k+1)-1+46])
-    clean_datanew[j,k+2] <- as.numeric(clean_data[j,4*(k+2)-1+46])
-  }
-}
+num <- nrow(clean_data)
+# extract the data of looking time
+column_number_start <- which(names(clean_data) == "trial1_sawcriticalevent")
+column_number_end <- which(names(clean_data) == "trial14_numrepeats")
 
-clean_datanum <- matrix(as.numeric(clean_datanew),nc=14)
- 
+data <- clean_data[1:num,column_number_start:column_number_end]
+```
 
-# habituation or not
+## Missing critical period
+
+First, we calculate the number of participants excluded because labs report they missed at least one critical period for 3 consecutive times.
+
+```{r calculate lab reported missing crit period, message=FALSE}
+# Create column "ex_critical" to indicate whether participants missed critical period on ANY trial
+# Note that this is as reported by the participating labs
+
+clean_data$ex_critical <- 0 # 0 indicates no exclusion, 1 indicates exclusion due to miss critical period for 3 consecutive times
+
+# Loop checks columns "trialX_sawcriticalevent" where X ranges from 1 to 14
+# If ANY of the columns marked "N", then "ex_critical" changed from 0 to 1 to indicate exclusion
 for (j in 1:num)
   
 {
-  clean_data[j,103]=15
-  for (k in 1:4)
+  
+  for (i in 1:14)
   {
-    if (((clean_datanum[j,k]+clean_datanum[j,k+1]+clean_datanum[j,k+2])>12)&!is.na(clean_datanum[j,k])&!is.na(clean_datanum[j,k+1])&!is.na(clean_datanum[j,k+2]))
+    
+    if (!is.na(data[j,4*i-3]))
     {
-      hab_crt = (clean_datanum[j,k]+clean_datanum[j,k+1]+clean_datanum[j,k+2])/2
-      break
-    }
-    else
-    {hab_crt = 0}
-    
-    
-  }
-  
-  
-  for (i in 1:12)
-  {
-    
-  
-    if (!is.na(clean_datanum[j,i+2])&!is.na(clean_datanum[j,i+1])&!is.na(clean_datanum[j,i])) 
-      
+          if (data[j,4*i-3]=="N")
     {
-      sumcrt = clean_datanum[j,i]+clean_datanum[j,i+1]+clean_datanum[j,i+2]
-      #print(sumcrt)
-      if (sumcrt< hab_crt) 
-      {
-        clean_data[j,103]=i+2
-      }
-      
+      clean_data$ex_critical[j]=1
+       break
     }
+    }
+
+   
     
   }
   
 }
-colnames(clean_data)[103]="hab_trial_num"
 
-clean_data[1:num,104]=0 
+# Tally
+misscrit_tally <- clean_data %>%
+  group_by(ex_critical) %>%
+  summarize(n = n())
+print(misscrit_tally)
+```
+## Failure to set habituation criteria
 
+Next, we calculate *theoretically* whether an infant set a habituation criteria. Note that we need to check this due to a PyHab error where habituation criteria is still set at trial 3 even if looking time during trials 1-3 did not exceed the threshold of 12s.
+```{r failure to set a habituation criteria}
+
+clean_data$ex_habcrt <- 1 # 0 indicates no exclusion, 1 indicates exclusion due to the failure to set a habituation criteria
+
+# This loop checks the lookingtime freezeframe sum of 3 consecutive trials, starting from trial 1 and ending at trial 4
+# This yields possible combinations trial 1-3, 2-4, 3-5, and 4-6
+# The first time this sum exceeds 12s, hab criteria is considered "set"
 for (j in 1:num)
-{
-  m = as.numeric(clean_data[j,103])
   
-  if(m<14)
+{
+  
+  for (i in 1:4)
   {
-  if(is.na(clean_datanew[j,m+1]))
-  {
-    clean_data[j,104]=1 
+    
+     if (!is.na(data[j,4*i-1]) & !is.na(data[j,4*(i+1)-1]) & !is.na(data[j,4*(i+2)-1]))
+     {
+    if ((as.numeric(data[j,4*i-1])+as.numeric(data[j,4*(i+1)-1])+as.numeric(data[j,4*(i+2)-1]))>=12 )
+    {
+      clean_data$ex_habcrt[j]=0
+    }
+     }
+    
+
   }
-  }
-  else
-  {
-    clean_data[j,104]=1
-  }
+  
 }
 
-colnames(clean_data)[104]="no_error"
+# Tally 
+habset_tally <- clean_data %>%
+  group_by(ex_habcrt) %>%
+  summarize(n = n())
+
+print(habset_tally)
+```
+## Habituation vs did not habituate
+
+Next, we calculate whether or not an infant habituated, and on which trial they *should have* habituated. Note that we need to calculate this from the reported looking time.
+
+```{r key variable definitions}
+### Separate chunk for easy navigation as these variables will come up repeatedly throughout the code
+
+# habituation: whether infants habituated (1) or not (0)
+
+# habcrt_value: habituation criterion, set as 50% of the first three consecutive trials within the first 6 trials to reach freeze frame looking sum of 12s or more
+
+# num_habcrt: the trial when a habituation criterion was SET
+
+# num_hab: the number of trials that infants should see (when habituation was reached or 14 when not habituated)
 
 ```
 
-## Sanity checks
+
+```{r habituation or not}
+
+clean_data$habituation <- 0 
+clean_data$num_hab <- 0 
+
+ 
+for (j in 1:num)
+  
+{
+  for (k in 1:4)
+  {
+    if (!is.na(data[j,4*k-1]) & !is.na(data[j,4*(k+1)-1]) & !is.na(data[j,4*(k+2)-1]))
+   if ((as.numeric(data[j,4*k-1])+as.numeric(data[j,4*(k+1)-1])+as.numeric(data[j,4*(k+2)-1]))>12)
+   {
+     clean_data$habcrt_value[j] = (as.numeric(data[j,4*k-1])+as.numeric(data[j,4*(k+1)-1])+as.numeric(data[j,4*(k+2)-1]))/2
+     clean_data$num_habcrt[j] = k+2
+     break
+   }
+    else
+    {clean_data$habcrt_value[j] = 0}
+    
+    
+  }
+  
+  numhabcrt <- clean_data$num_habcrt[j]
+  for (i in numhabcrt:12)
+  {
+    
+    
+    if (!is.na(data[j,4*(i+2)-1]))
+        
+    {
+        sumcrt = as.numeric(data[j,4*i-1])+as.numeric(data[j,4*(i+1)-1])+as.numeric(data[j,4*(i+2)-1])
+        #print(sumcrt)
+        if (!is.na(sumcrt))
+        {
+
+        if (sumcrt< clean_data$habcrt_value[j]) 
+    {
+      clean_data$habituation[j]=1
+      clean_data$num_hab[j] = i+2
+        }
+                    
+        }
+      
+    }
+    
+  }
+  
+}
+
+# Convert "num_hab" to reasonable values
+
+clean_data$num_hab <- ifelse(clean_data$ex_critical==0 # if infants watched all critical periods
+                             & clean_data$ex_habcrt ==0 # and successfully set a habituation criteria
+                             & clean_data$num_hab == 0 # and they have 0 as their habituation number (i.e. unchanged after loop)
+                             & clean_data$habituation == 0, # and they did not habituate
+                             14, # set their num_hab to 14, since they should have saw the maximum number of trials
+                             clean_data$num_hab) # Otherwise, other cases are fine and num_hab should be calculated as above
+
+# set the values of participants that should be excluded as NAs
+# If they are excluded because of missing critical period, then habituation should be set to NA because it's irrelevant whether they habituated
+# Also, num_hab should be set to NA for the same reason
+# However, we will set them as "not_interpretable" instead of "NA" in order to be able to differentiate them from error values generated by bad code
+
+clean_data <- clean_data %>%
+  mutate(habituation = ifelse(clean_data$ex_critical==1,
+                              "not_interpretable",
+                              clean_data$habituation),
+         num_hab = ifelse(clean_data$ex_critical==1,
+                              "not_interpretable",
+                              clean_data$num_hab))
+
+# If they were excluded for failing to set habituation criteria, then all of the following values should be NA since they are not interpretable
+# As above, we will set them as "not_interpretable" instead of "NA" in order to be able to differentiate them from error values generated by bad code
+
+clean_data <- clean_data %>%
+  mutate(habituation = ifelse(clean_data$ex_habcrt == 1,
+                              "not_interpretable",
+                              clean_data$habituation),
+         habcrt_value = ifelse(clean_data$ex_habcrt == 1,
+                              "not_interpretable",
+                              clean_data$habcrt_value),
+         num_habcrt = ifelse(clean_data$ex_habcrt == 1,
+                              "not_interpretable",
+                              clean_data$num_habcrt),
+         num_hab = ifelse(clean_data$ex_habcrt == 1,
+                              "not_interpretable",
+                              clean_data$num_hab))
+
+```
+## Sanity checking habituation related factors
+
+### Habituation criteria checks
+
+```{r sanity check for habituation criteria, message = FALSE}
+data$habcrt_value <- clean_data$habcrt_value
+data$habituation <- clean_data$habituation
+data$num_habcrt <-clean_data$num_habcrt
+data$num_hab <-clean_data$num_hab
+data$ex_critical <-clean_data$ex_critical # need to include these two columns because they might be culprits for NA values
+data$ex_habcrt <-clean_data$ex_habcrt # need to include these two columns because they might be culprits for NA values
+
+# PUll out all relevant columns
+data_check <- dplyr::select(data,c(ex_critical, 
+                                   ex_habcrt, 
+                                   num_hab,
+                                   num_habcrt,
+                                   habituation,
+                                   habcrt_value,
+                                   trial1_lookingtime_freezeframe,
+                                   trial2_lookingtime_freezeframe,
+                                   trial3_lookingtime_freezeframe,
+                                   trial4_lookingtime_freezeframe,
+                                   trial5_lookingtime_freezeframe,
+                                   trial6_lookingtime_freezeframe,
+                                   trial7_lookingtime_freezeframe,
+                                   trial8_lookingtime_freezeframe,
+                                   trial9_lookingtime_freezeframe,
+                                   trial10_lookingtime_freezeframe,
+                                   trial11_lookingtime_freezeframe,
+                                   trial12_lookingtime_freezeframe,
+                                   trial13_lookingtime_freezeframe,
+                                   trial14_lookingtime_freezeframe))
+
+### First, we check if habituation criterion SETTING is working as intended
+### We manually calculate the habituation criterion
+### The manually calculated value (new_hab_crit) should match the column generated by the loop (habcrt_value)
+
+# Isolate participants who set habituation at trial 3
+data_check_3 <- subset(data_check,num_habcrt==3)
+data_check_3 <- data_check_3 %>%
+  mutate(new_hab_crit = (trial1_lookingtime_freezeframe + trial2_lookingtime_freezeframe + trial3_lookingtime_freezeframe)/2,
+         match = ifelse(new_hab_crit == habcrt_value, "yes", "no"),
+         .after = habcrt_value)
+tally_hab3 <- data_check_3 %>%
+  group_by(match) %>%
+  summarize(n = n())
+print(tally_hab3)
+
+# There is one problem case here; still need to figure out who and why there is a mismatch
+# It seems the loop calculated 0 for this participant's habituation criteria
+problem_cases_hab3 <- data_check_3 %>%
+  filter(match != "yes")
+
+# Isolate participants who set habituation at trial 4
+data_check_4 <- subset(data_check,num_habcrt==4)
+data_check_4 <- data_check_4 %>%
+  # Manually calculate habituation criteria to check if the loop functioned as intended
+  mutate(new_hab_crit = (trial2_lookingtime_freezeframe + trial3_lookingtime_freezeframe + trial4_lookingtime_freezeframe)/2,
+         match = ifelse(new_hab_crit == habcrt_value, "yes", "no"),
+         .after = habcrt_value)
+tally_hab4 <- data_check_4 %>%
+  group_by(match) %>%
+  summarize(n = n())
+print(tally_hab4)
+
+# Isolate participants who set habituation at trial 5
+data_check_5 <- subset(data_check,num_habcrt==5)
+data_check_5 <- data_check_5 %>%
+  # Manually calculate habituation criteria to check if the loop functioned as intended
+  mutate(new_hab_crit = (trial5_lookingtime_freezeframe + trial3_lookingtime_freezeframe + trial4_lookingtime_freezeframe)/2,
+         match = ifelse(new_hab_crit == habcrt_value, "yes", "no"),
+         .after = habcrt_value)
+tally_hab5 <- data_check_5 %>%
+  group_by(match) %>%
+  summarize(n = n())
+print(tally_hab5)
+
+# There are 2 problem case here; looks like might just be a rounding mismatch, fine to ignore
+problem_cases_hab5 <- data_check_5 %>%
+  filter(match != "yes")
+
+
+# Isolate participants who set habituation at trial 6
+data_check_6 <- subset(data_check,num_habcrt==6)
+data_check_6 <- data_check_6 %>%
+  # Manually calculate habituation criteria to check if the loop functioned as intended
+  mutate(new_hab_crit = (trial5_lookingtime_freezeframe + trial6_lookingtime_freezeframe + trial4_lookingtime_freezeframe)/2,
+         match = ifelse(new_hab_crit == habcrt_value, "yes", "no"),
+         .after = habcrt_value)
+tally_hab6 <- data_check_6 %>%
+  group_by(match) %>%
+  summarize(n = n())
+print(tally_hab6)
+
+# There are 2 problem case here; looks like might just be a rounding mismatch, fine to ignore
+problem_cases_hab6 <- data_check_6 %>%
+  filter(match != "yes")
+```
+### Checking number of trials to set habituation criterion
+
+```{r sanity check for habituation criterion num}
+### Next, we check if the trial number at which the hab criterion should be SET matches
+### We manually check if the sum of the first X trials exceeds 12s
+
+# Check infants who set their hab criteria on trial 3
+data_check_3 <- subset(data_check,num_habcrt==3)
+data_check_3 <- data_check_3 %>%
+  mutate(num_habcrt_correct = ifelse(trial1_lookingtime_freezeframe + trial2_lookingtime_freezeframe + trial3_lookingtime_freezeframe >= 12,
+         "correct", "incorrect"),
+         .after = num_habcrt)
+tally_hab3 <- data_check_3 %>%
+  group_by(num_habcrt_correct) %>%
+  summarize(n = n())
+print(tally_hab3)
+
+# Check infants who set their hab criteria on trial 4
+data_check_4 <- subset(data_check,num_habcrt==4)
+data_check_4 <- data_check_4 %>%
+  mutate(num_habcrt_correct = ifelse(trial4_lookingtime_freezeframe + trial2_lookingtime_freezeframe + trial3_lookingtime_freezeframe >= 12,
+         "correct", "incorrect"),
+         .after = num_habcrt)
+tally_hab4 <- data_check_4 %>%
+  group_by(num_habcrt_correct) %>%
+  summarize(n = n())
+print(tally_hab4)
+
+# Check infants who set their hab criteria on trial 5
+data_check_5 <- subset(data_check,num_habcrt==5)
+data_check_5 <- data_check_5 %>%
+  mutate(num_habcrt_correct = ifelse(trial4_lookingtime_freezeframe + trial5_lookingtime_freezeframe + trial3_lookingtime_freezeframe >= 12,
+         "correct", "incorrect"),
+         .after = num_habcrt)
+tally_hab5 <- data_check_5 %>%
+  group_by(num_habcrt_correct) %>%
+  summarize(n = n())
+print(tally_hab5)
+
+# Check infants who set their hab criteria on trial 6
+data_check_6 <- subset(data_check,num_habcrt==6)
+data_check_6 <- data_check_6 %>%
+  mutate(num_habcrt_correct = ifelse(trial4_lookingtime_freezeframe + trial5_lookingtime_freezeframe + trial6_lookingtime_freezeframe >= 12,
+         "correct", "incorrect"),
+         .after = num_habcrt)
+tally_hab6 <- data_check_6 %>%
+  group_by(num_habcrt_correct) %>%
+  summarize(n = n())
+print(tally_hab6)
+```
+
+### Checking theoretical number of trials to habituate
+
+```{r sanity check for trials to habituate}
+
+### here we check whether infants correctly habituated as calculated by the loop
+### There are too many cases to test exhaustively, so we test three boundary cases: habituate at trial 6, trial 14, and never habituated
+
+# But first, we check if num_hab has reasonable range (should be 6 to 14)
+range_tally <- data %>%
+  group_by(num_hab) %>%
+  summarize(n = n())
+
+
+# First we check infants who habituated on trial 6. This also means they set their habcrt on trial 3
+data_check_hab6 <- subset(data_check,num_hab==6)
+data_check_hab6 <- data_check_hab6 %>%
+  mutate(sum_4to6 = trial4_lookingtime_freezeframe + trial5_lookingtime_freezeframe + trial6_lookingtime_freezeframe,
+         habituated_at_6 = ifelse(sum_4to6 <= habcrt_value, "yes", "no"),
+         .after = habcrt_value)
+tally_hab6 <- data_check_hab6 %>%
+  group_by(habituated_at_6) %>%
+  summarize(n = n())
+print(tally_hab6) # all correct
+
+
+# Next we check infants who habituated on trial 14 and those who never habituated
+# remove the excluded babies since they can generate uninterpretable NA values
+
+data_check_hab14 <- subset(data_check,num_hab==14 & ex_critical == 0 & ex_habcrt == 0)
+data_check_hab14 <- data_check_hab14 %>%
+  mutate(sum_12to14 = trial12_lookingtime_freezeframe + trial13_lookingtime_freezeframe + trial14_lookingtime_freezeframe,
+         habituated_at_14 = ifelse(sum_12to14 <= habcrt_value, 1, 0),
+         match = ifelse(habituation == habituated_at_14, "yes", "no"),
+         .after = habcrt_value)
+tally_hab14 <- data_check_hab14 %>%
+  group_by(match) %>%
+  summarize(n = n())
+print(tally_hab14) # 16 NA values, which signal potential pyhab errors. Note there are 0 "no", which means rows with values were calculated correctly
+# We will check if this is the case below
+```
+
+## Pyhab error checking
+
+There was an error where PyHab was prematurely (and therefore incorrectly) setting the habituation criterion at Trial 3 even when the sum of the first three trials did not exceed 12s. In these instances, the habituation criteria set by PyHab would be *lower* than the theoretical correct criterion. Here we compare how many trials the infants should have seen, num_hab, against how many trials they actually saw, num_see.
+
+```{r pyhab checking}
+# whether infants watch inappropriate number of trials
+
+# Calculate how many trials the infant saw, num_see
+
+for (j in 1:num)
+  
+{
+  for (k in 1:14)
+  {
+    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k-3]) & is.na(data[j,4*k]))
+    {
+     clean_data$num_see[j] = k-1
+     break
+    }
+
+    else
+    {clean_data$num_see[j] = 14}
+    
+    
+  }
+}
+
+# ex_error: whether the infant saw mismatched trials (o means no, 1 means yes and should be excluded)
+# There are three acceptable cases:
+clean_data$ex_error <- ifelse((clean_data$num_hab == clean_data$num_see)| # num_hab matches num_see, or
+                                (clean_data$num_see<6) | # infants saw less than the minimum of 6 trials, indicating other types of error, or
+                                is.na(clean_data$num_hab)  # num_hab is NA, meaning infant was excluded above 
+                              ,0,1)
+tally_pyhaberror <- clean_data %>%
+  group_by(ex_error) %>%
+  summarize(n = n())
+
+# Inspect problem cases
+pyhaberror_cases <- clean_data %>%
+  filter(ex_error == 1)
+  
+
+```
+
+```{r calculate error number only due to phyhab error}
+error <- subset(clean_data,ex_error==1 & ex_critical==0 & ex_habcrt==0)
+nrow(error)
+
+```
+
+```{r new exclusion column}
+# change exclusion column (missing critical periods, no habituation criteria, error phyhab)
+clean_data$exclusion_exp <- 0
+
+for (i in 1:num)
+{
+  if (clean_data$ex_critical[i]==1|clean_data$ex_habcrt[i]==1|clean_data$ex_error[i]==1)
+  {
+     clean_data$exclusion_exp[i] <- 1
+  }
+ 
+}
+```
+
+```{r looking time calculation message=FALSE}
+clean_data$total_looking <- ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe) 
+```
+
+
+```{r looking time in helping and hindering conditions message=FALSE}
+clean_data$second_looking <-
+  (ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
+      ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
+      ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe))/7 
+
+clean_data$first_looking <- (ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) )/7
+
+for (i in 1:nrow(clean_data))
+{
+  if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "first")
+{
+  clean_data$up_looking[i] <- clean_data$first_looking[i]
+  clean_data$down_looking[i] <- clean_data$second_looking[i]
+}
+
+if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "second")
+{
+  clean_data$up_looking[i] <- clean_data$second_looking[i]
+  clean_data$down_looking[i] <- clean_data$first_looking[i]
+}
+}
+
+
+```
+
+## Basic Sanity checks
 
 First, we perform some checks for whether there are user-level errors in the data
 
@@ -220,6 +645,7 @@ helper_check_isolate <- helper_check %>%
   dplyr::select(c(lab_id, subj_id, push_up_identity, character_choice, helper_hinderer_choice, correct_choice))
 
 ```
+
 Temporarily remove entry errors
 
 ```{r remove entry errors, message = FALSE}
@@ -271,8 +697,6 @@ choice_filtered_data <- age_filtered_data %>%
 ```
 
 
-
-
 We now prepare the clean data for the analyses to come. 
 
 ```{r data preparation}
@@ -286,6 +710,156 @@ primary_data <- choice_filtered_data %>%
 primary_data$hab <- ifelse(primary_data$hab_trial_num==15,0,1) ## This line of code isn't working but not sure why - Francis
 ```
 
+# Descriptive results
+
+We present some basic information, such as sample size and exclusion rate for each lab.
+
+```{r data description, message=FALSE}
+## valid participants
+# sample size for each lab
+library(dplyr)
+
+# Group by lab id and calculate the mean age for each lab
+summary_by_lab <- primary_data %>%
+  group_by(lab_id) %>%
+  summarise(mean_age = mean(age_days, na.rm = TRUE),
+            valid_sample_size = n())
+
+
+## all participants
+# Group by lab id and calculate the mean age for each lab
+summary_by_lab_all <- clean_data %>%
+  group_by(lab_id) %>%
+  summarise(sample_size = n())
+
+
+merged_data <- merge(summary_by_lab_all, summary_by_lab, by = "lab_id", all.x = TRUE)
+
+merged_data$exclusion_rate <- (merged_data$sample_size-merged_data$valid_sample_size)/merged_data$sample_size 
+
+
+# Print or export the result
+print(merged_data)
+write.csv(merged_data, "summary_by_lab_all.csv", row.names = FALSE)
+
+
+exclusion <- merged_data[, c("lab_id", "exclusion_rate")]
+
+primary_data <- merge(primary_data, exclusion, by = "lab_id", all.x = TRUE)
+
+
+
+```
+
+```{r screen and distance, message=FALSE}
+# screen size (inch to cm)
+screen_m <- mean(primary_data$screen_size_inches, na.rm = TRUE)*2.54
+screen_sd <- sd(primary_data$screen_size_inches, na.rm = TRUE)*2.54
+screen_min <- min(primary_data$screen_size_inches, na.rm = TRUE)*2.54
+screen_max <- max(primary_data$screen_size_inches, na.rm = TRUE)*2.54
+
+print(screen_m)
+print(screen_sd)
+print(screen_min)
+print(screen_max)
+
+# distance (cm)
+distance_m <- mean(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_sd <- sd(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_min <- min(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_max <- max(primary_data$infant_distance_cm, na.rm = TRUE)
+
+print(distance_m)
+print(distance_sd)
+print(distance_min)
+print(distance_max)
+
+```
+
+We generate the number of excluded participants for each exclusion type: 
+'DevDisorder', 'Preterm', 'FailToSetHabCrit', 'FailToViewCritPeriod', 'FailToMakeChoice', 'OutsideInterference', 'ExperimenterError', 'EquipmentError', 'FussOut'
+ 
+```{r exclusion, message=FALSE}
+count_Preterm <- sum(clean_data$exclusion_type_1 == "Preterm", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "Preterm", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "Preterm", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "Preterm", na.rm = TRUE)
+print(paste0("Preterm:",count_Preterm))
+print(count_Preterm/nrow(clean_data))
+
+count_DevDisorder <- sum(clean_data$exclusion_type_1 == "DevDisorder", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "DevDisorder", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "DevDisorder", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "DevDisorder", na.rm = TRUE)
+print(paste0("DevDisorder:",count_DevDisorder))
+print(count_DevDisorder/nrow(clean_data))
+
+count_FailToMakeChoice <- sum(clean_data$exclusion_type_1 == "FailToMakeChoice", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "FailToMakeChoice", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "FailToMakeChoice", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "FailToMakeChoice", na.rm = TRUE)
+print(paste0("FailToMakeChoice:",count_FailToMakeChoice))
+print(count_FailToMakeChoice/nrow(clean_data))
+
+count_OutsideInterference <- sum(clean_data$exclusion_type_1 == "OutsideInterference", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "OutsideInterference", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "OutsideInterference", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "OutsideInterference", na.rm = TRUE)
+print(paste0("OutsideInterference:",count_OutsideInterference))
+print(count_OutsideInterference/nrow(clean_data))
+
+count_ExperimenterError <- sum(clean_data$exclusion_type_1 == "ExperimenterError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "ExperimenterError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "ExperimenterError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "ExperimenterError", na.rm = TRUE)
+print(paste0("ExperimenterError:",count_ExperimenterError))
+print(count_ExperimenterError/nrow(clean_data))
+
+count_EquipmentError <- sum(clean_data$exclusion_type_1 == "EquipmentError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "EquipmentError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "EquipmentError", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "EquipmentError", na.rm = TRUE)
+print(paste0("EquipmentError:",count_EquipmentError))
+print(count_EquipmentError/nrow(clean_data))
+
+count_FussOut <- sum(clean_data$exclusion_type_1 == "FussOut", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_2 == "FussOut", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_3 == "FussOut", na.rm = TRUE)+
+  sum(clean_data$exclusion_type_4 == "FussOut", na.rm = TRUE)
+print(paste0("FussOut:",count_FussOut))
+print(count_FussOut/nrow(clean_data))
+
+
+count_FailToSetHabCrit <- sum(clean_data$ex_habcrt)
+print(paste0("FailToSetHabCrit:",count_FailToSetHabCrit))
+print(count_FailToSetHabCrit/nrow(clean_data))
+
+count_FailToViewCritPeriod <- sum(clean_data$ex_critical) 
+print(paste0("FailToViewCritPeriod:",count_FailToViewCritPeriod))
+print(count_FailToViewCritPeriod/nrow(clean_data))
+
+count_PyhabError <- sum(clean_data$ex_error) 
+print(paste0("Error trial number:",count_PyhabError))
+print(count_PyhabError/nrow(clean_data))
+
+```
+
+```{r add exclusion rate due to failure to make a choice for each lab, message=FALSE}
+choice_exclusion <- clean_data %>%
+  group_by(lab_id) %>%
+  summarise(choice_exclusion1 = sum(exclusion_type_1 == "FailToMakeChoice", na.rm = TRUE),choice_exclusion2 = sum(exclusion_type_2 == "FailToMakeChoice", na.rm = TRUE),choice_exclusion3 = sum(exclusion_type_3 == "FailToMakeChoice", na.rm = TRUE),choice_exclusion4 = sum(exclusion_type_4 == "FailToMakeChoice", na.rm = TRUE))
+
+choice_exclusion$choice_exclusion <- choice_exclusion$choice_exclusion1 + choice_exclusion$choice_exclusion2 + choice_exclusion$choice_exclusion3 + choice_exclusion$choice_exclusion4 
+
+lab_choice_exclusion <- choice_exclusion[, c("lab_id", "choice_exclusion")]
+lab_choice_exclusion_rate <- merge(merged_data,lab_choice_exclusion, by = "lab_id", all.x = TRUE)
+lab_choice_exclusion_rate$choice_exclusion_rate <- lab_choice_exclusion_rate$choice_exclusion/lab_choice_exclusion_rate$sample_size
+
+lab_choice_exclusion <-  lab_choice_exclusion_rate[,c("lab_id", "choice_exclusion_rate")]
+primary_data <- merge(primary_data,lab_choice_exclusion, by = "lab_id", all.x = TRUE)
+```
+
+
 # Data analysis
 
 We first produce some diagnostic plots. We then define the full Bayesian model against which null models will be compared. Finally we address the two research questions: do infants in the social condition choose preferably the helper character, and does preference for either character change with age.
@@ -293,6 +867,13 @@ We first produce some diagnostic plots. We then define the full Bayesian model a
 ## Diagnostic plots
 
 We can first check how infants in the two conditions performed in general depending on their age.
+```{r proportion}
+social <- subset(primary_data,condition == "social")
+print(paste0("Proportion of helper choice in the social condition:",mean(social$chose_helper)))
+nonsocial <- subset(primary_data,condition == "nonsocial")
+print(paste0("Proportion of helper choice in the nonsocial condition:",mean(nonsocial$chose_helper)))
+```
+
 
 ```{r age_plot, message=FALSE}
 scatter <- ggplot(primary_data,
@@ -308,7 +889,69 @@ scatter <- ggplot(primary_data,
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("plots/simulations/age_scatter.pdf", scatter,
+ggsave("age_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+We also check how infants in the two conditions performed in general depending on the number of habituation trials.
+
+```{r number of habituation trial plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = hab_trial_num,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("number of habituation trials") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+#ggsave("age_scatter.pdf", scatter,
+ #      units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+We also check how infants in the two conditions performed in general depending on total looking time during habituation.
+
+```{r total looking time plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = total_looking/num_hab,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("looking time") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("age_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+
+```{r total looking time plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = habituation,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("habituation") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
+    scale_x_continuous(breaks = c(0, 1),
+                     labels = c("Not habituated", "Habituated"))
+ggsave("age_scatter.pdf", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -325,7 +968,7 @@ by_lab <- primary_data %>%
                                    n = tested)$lower,
             ci_upper = binom.bayes(x = chose_helper, 
                                    n = tested)$upper) %>%
-  mutate(condition = factor(condition, c("social", "nonsocial")))
+  mutate(condition = factor(condition, c("nonsocial", "social")))
 
 forest <- ggplot(by_lab,
                  aes(x = lab_id, colour = condition,
@@ -339,7 +982,7 @@ forest <- ggplot(by_lab,
                       labels = c("non-social", "social")) +
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
   theme(legend.position = "bottom")
-ggsave("plots/simulations/forest.pdf", forest,
+ggsave("forest.pdf", forest,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (forest)
 ```
@@ -372,7 +1015,7 @@ brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
 brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days +
-                          (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
                         family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
@@ -422,7 +1065,7 @@ brm.noninfo.no_condition <- brm(chose_helper ~ 1 + z_age_days +
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
-We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
+We can now bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
 
 ```{r bayes_nocondition message=FALSE}
 # Bridge-sample posterior
@@ -480,11 +1123,11 @@ print(bf.noninfo.age)
 
 ### Bayesian marginal effects
 
-We plot the initial scatter plot by age with estimates from our full, informative Bayesian model.
+We plot the initial scatter plot by age with estimates from our full, non-informative Bayesian model.
 
-```{r marginal_plot, results=FALSE, message=FALSE}
+```{r marginal_plot_noninfo, results=FALSE, message=FALSE}
 # Compute marginal effects
-marginal_effects <- brm.info.full %>%
+marginal_effects <- brm.noninfo.full %>%
   ggpredict(terms = c("z_age_days [all]", "condition")) %>%
   rename(z_age_days = x,
          chose_helper = predicted,
@@ -512,7 +1155,7 @@ scatter.bayes <- ggplot(primary_data,
                     labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("plots/simulations/age_scatter_bayes.pdf", scatter.bayes,
+ggsave("age_scatter_bayes_noninfo.pdf", scatter.bayes,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter.bayes)
 
@@ -523,7 +1166,7 @@ ggsave("plots/simulations/age_scatter_bayes.pdf", scatter.bayes,
 
 To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
 
-```{r icc message=FALSE}
+```{r icc, message=FALSE}
 icc <- iccbin(cid = lab_id, y = chose_helper, 
               data = primary_data,
               alpha = 0.05)
@@ -534,7 +1177,7 @@ print(icc)
 
 Examine whether infants prefer helper over hinder in the social condition
 
-```{r social condition, results=FALSE, message=FALSE}
+```{r social_condition_intercept, results=FALSE, message=FALSE}
 # select data
 social_data <- subset(primary_data,condition == "social")
 # Define priors
@@ -573,7 +1216,7 @@ brm.noninfo.single.no_intercept <- brm(chose_helper ~ z_age_days +
                      chains = 4, future = T, save_all_pars = TRUE)
 ```
 
-```{r social condition Bayes factor, message=FALSE}
+```{r social_condition_intercept Bayes factor, message=FALSE}
 # Bridge-sample posterior
 bridge.info.single.full <- bridge_sampler(brm.info.single.full, silent = T)
 bridge.info.single.no_intercept <- bridge_sampler(brm.info.single.no_intercept, silent = T)
@@ -586,16 +1229,409 @@ bf.noninfo.single.intercept <- bf(bridge.noninfo.single.full, bridge.noninfo.sin
 print(bf.info.single.intercept)
 print(bf.noninfo.single.intercept)
 ```
-```{r social condition parameters, message=FALSE}
+
+
+```{r social_condition_intercept parameters, message=FALSE}
 brm.info.single.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.single.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
 
-# Data analysis separating habituated and nonhabituated infants
+# Exploraty analyses
 
-## Plot (habituated vs. nonhabituated)
+## pre-registered exploratory analyses
+
+We analyzed other potential moderators that were mentioned in our registered report, including (1) attention to the video events (i.e., as measured by the number of trials to habituation, overall looking time to the still frame events), (2) clear versus ambiguous choice actions (i.e., whether infants touched both characters during the choice phase), and (3) experimenter blindness (i.e., whether the experimenter administering the choice phase knew whether the infant participated in the Social vs. Non-Social condition). 
+
+### total looking time
+
+We analyzed the effect of overall looking time to the still frame events.
+
+```{r total looking full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.total_looking <- brm(chose_helper ~ 1 + condition + total_looking + condition:total_looking +
+                       (1 + condition + total_looking + condition:total_looking | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r total looking full_estimates of each parameter, message=FALSE}
+brm.noninfo.total_looking %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+
+brm.noninfo.no_total_looking <- brm(chose_helper ~ 1 + condition + 
+                       (1 + condition | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r total looking Bayes factor, results=FALSE, message=FALSE}
+# Bridge-sample posterior
+bridge.noninfo.total_looking <- bridge_sampler(brm.noninfo.total_looking, silent = T)
+bridge.noninfo.no_total_looking <- bridge_sampler(brm.noninfo.no_total_looking, silent = T)
+
+# Compute Bayes factors
+bf.noninfo.total_looking <- bf(bridge.noninfo.total_looking, bridge.noninfo.no_total_looking)
+print(bf.noninfo.total_looking)
+
+```
+
+We also separate looking time under helping/upward and hindering/downward scenarios and analyze their potential moderating effects.
+
+```{r separated looking time full model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.looking <- brm(chose_helper ~ 1 + condition + up_looking +down_looking + condition:up_looking + condition:down_looking +
+                       (1 + condition + + up_looking +down_looking + condition:up_looking + condition:down_looking| lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r separated looking time full_estimates of each parameter, message=FALSE}
+brm.noninfo.looking %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### number of habituation trials
+
+```{r habituation trials full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.hab_trial_num <- brm(chose_helper ~ 1 + condition + hab_trial_num + condition:hab_trial_num +
+                       (1 + condition + hab_trial_num + condition:hab_trial_num | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r habituation trials full_estimates of each parameter, message=FALSE}
+brm.noninfo.hab_trial_num %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### ambiguous choice
+```{r touch both full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.touch_both <- brm(chose_helper ~ 1 + condition + touch_both + condition:touch_both +
+                       (1 + condition + touch_both + condition:touch_both | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r full_estimates of each parameter, message=FALSE}
+brm.noninfo.touch_both %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### naive experimenter
+
+```{r naive RA full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.RA_1_naive <- brm(chose_helper ~ 1 + condition + RA_1_naive + condition:RA_1_naive +
+                       (1 + condition + RA_1_naive + condition:RA_1_naive | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r full_estimates of each parameter, message=FALSE}
+brm.noninfo.RA_1_naive %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+## non-pre-registered exploratory analyses
+
+We also analyzed other potential moderators that were not mentioned in our registered report, including  (1) experiment-level factors (i.e., the order of helping vs. hindering videos, helper identity (yellow vs. blue), helper side during choice (right vs. left), the visual angle calculated by the distance of infants from screen and screen size, whether the hill paradigm was conducted in the first session during infant visits, whether the experimenter wore a mask or not, the presentation method of stimuli), (2) child-level characteristics (i.e., handedness, color blindness, participant gender, the exposure percentage of  primary language), and (3) lab-level factors (i.e., the exclusion rate of each lab, the rate of exclusion due to failure to make a choice for each lab).
+
+### experimenter level
+```{r push_up_order full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.push_up_order <- brm(chose_helper ~ 1 + condition + push_up_order + condition:push_up_order +
+                       (1 + condition + push_up_order + condition:push_up_order | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r push_up_order full_estimates of each parameter, message=FALSE}
+brm.noninfo.push_up_order %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r push_up_identity full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.push_up_identity <- brm(chose_helper ~ 1 + condition + push_up_identity + condition:push_up_identity +
+                       (1 + condition + push_up_identity + condition:push_up_identity | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r push_up_identity full_estimates of each parameter, message=FALSE}
+brm.noninfo.push_up_identity %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r push_up_side full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.push_up_side <- brm(chose_helper ~ 1 + condition + push_up_side + condition:push_up_side +
+                       (1 + condition + push_up_side + condition:push_up_side | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r push_up_side full_estimates of each parameter, message=FALSE}
+brm.noninfo.push_up_side %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r visual_angle full_model, results=FALSE, message=FALSE}
+primary_data$visual_angle <- 2 * atan(primary_data$screen_size_inches*2.54 / (2 * primary_data$infant_distance_cm)) * (180 / pi)
+
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.visual_angle <- brm(chose_helper ~ 1 + condition + visual_angle + condition:visual_angle +
+                       (1 + condition + visual_angle + condition:visual_angle | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r visual_angle full_estimates of each parameter, message=FALSE}
+brm.noninfo.visual_angle %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r second_session full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.second_session <- brm(chose_helper ~ 1 + condition + second_session + condition:second_session +
+                       (1 + condition + second_session + condition:second_session | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r second_session full_estimates of each parameter, message=FALSE}
+brm.noninfo.second_session %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r choice_experimenter_mask full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.choice_experimenter_mask <- brm(chose_helper ~ 1 + condition + choice_experimenter_mask + condition:choice_experimenter_mask +
+                       (1 + condition + choice_experimenter_mask + condition:choice_experimenter_mask | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r choice_experimenter_mask full_estimates of each parameter, message=FALSE}
+brm.noninfo.choice_experimenter_mask %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r method full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.method <- brm(chose_helper ~ 1 + condition + method + condition:method +
+                       (1 + condition + method + condition:method | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r method full_estimates of each parameter, message=FALSE}
+brm.noninfo.method %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### child level
+
+```{r infant_handedness full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.infant_handedness <- brm(chose_helper ~ 1 + condition + infant_handedness + condition:infant_handedness +
+                       (1 + condition + infant_handedness + condition:infant_handedness | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r infant_handedness full_estimates of each parameter, message=FALSE}
+brm.noninfo.infant_handedness %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r colorblindness_primaryfamily full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.colorblindness_primaryfamily <- brm(chose_helper ~ 1 + condition + colorblindness_primaryfamily + condition:colorblindness_primaryfamily +
+                       (1 + condition + colorblindness_primaryfamily + condition:colorblindness_primaryfamily | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r colorblindness_primaryfamily full_estimates of each parameter, message=FALSE}
+brm.noninfo.colorblindness_primaryfamily %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r participant_gender full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.participant_gender <- brm(chose_helper ~ 1 + condition + participant_gender + condition:participant_gender +
+                       (1 + condition + participant_gender + condition:participant_gender | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r participant_gender full_estimates of each parameter, message=FALSE}
+brm.noninfo.participant_gender %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r percent_primarylanguage full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.percent_primarylanguage <- brm(chose_helper ~ 1 + condition + percent_primarylanguage + condition:percent_primarylanguage +
+                       (1 + condition + percent_primarylanguage + condition:percent_primarylanguage | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r percent_primarylanguage full_estimates of each parameter, message=FALSE}
+brm.noninfo.percent_primarylanguage %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### lab level
+
+```{r exclusion_rate full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.exclusion_rate <- brm(chose_helper ~ 1 + condition + exclusion_rate + condition:exclusion_rate +
+                       (1 + condition + exclusion_rate + condition:exclusion_rate | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r exclusion_rate full_estimates of each parameter, message=FALSE}
+brm.noninfo.exclusion_rate %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r choice_exclusion_rate full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.choice_exclusion_rate <- brm(chose_helper ~ 1 + condition + choice_exclusion_rate + condition:choice_exclusion_rate +
+                       (1 + condition + choice_exclusion_rate + condition:choice_exclusion_rate | lab_id), 
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r choice_exclusion_rate full_estimates of each parameter, message=FALSE}
+brm.noninfo.choice_exclusion_rate %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+
+## Exploratory analsyes separating habituated and nonhabituated infants 
+
+We also analyzed whether infants were habituated or not would influence infants' choices under different conditions. We also exported the exact proportion of choosing the helper for infants who were habituated or not habibuated under two conditions.
+
+### Plot (habituated vs. nonhabituated)
 
 ```{r habituation_plot}
 scatter <- ggplot(primary_data,
@@ -605,25 +1641,31 @@ scatter <- ggplot(primary_data,
   stat_smooth(method = "lm") +
   geom_point(position = position_jitter(height = .05, width = 0),
              size = 1) +
-  xlab("Habituation trial") + ylab("Choice") + theme(legend.position = "top") +
+  xlab("Habituation or not") + ylab("Choice") + theme(legend.position = "top") +
   scale_colour_brewer(palette = "Dark2", name = "Condition",
                       breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
-                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("plots/simulations/hab_scatter.pdf", scatter,
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
+  scale_x_continuous(breaks = c(0, 1),
+                     labels = c("unhabituated", "habituated"))
+ggsave("hab_scatter.pdf", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
+
+# Create the interaction variable
+primary_data$Interaction <- interaction(primary_data$condition, primary_data$hab)
+
+result <- tapply(primary_data$chose_helper, primary_data$Interaction, FUN = function(x) mean(x))  # You can use any summary function here
+
+print(result)
 ```
 
+### Bayesian model adding habituation as a moderator
 
-## Bayesian analysis
+Whether infants were habituated or not was added to the full model.
 
-### Bayesian model adding habituation
-
-The interaction between habituation and condition was added to the full model.
-
-```{r full_model_habituation, results=FALSE, message=FALSE}
+```{r habituation or not full_model, results=FALSE, message=FALSE}
 # Define priors
 priors.full <- c(set_prior("normal(0, .1)",
                            class = "Intercept"),
@@ -631,9 +1673,6 @@ priors.full <- c(set_prior("normal(0, .1)",
                            class = "b"),
                  set_prior("normal(.5754, .1)",
                            # From Margoni & Surian (64%), logit(.64) = .5754 
-                           # From Yiyi's meta-analysis of non-social(39%),
-                           # logit(.39) = -0.4473
-                           # social vs. nonsocial = .5754-(-.4473) = 1.0227
                            class = "b", coef = "conditionsocial"),
                  set_prior("student_t(3, 0, 2)",
                            class = "sd"))
@@ -641,14 +1680,14 @@ priors.noninformative <- set_prior("student_t(3, 0, 2)",
                                    class = "sd")
 
 # Run model
-brm.info.full <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:hab + condition:z_age_days +
-                       (1 + condition + hab + condition:hab + z_age_days + condition:z_age_days | lab_id), 
+brm.info.full <- brm(chose_helper ~ 1 + condition + hab + condition:hab + 
+                       (1 + condition + hab + condition:hab | lab_id), 
                      family = bernoulli, data = primary_data,
                      prior = priors.full, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:hab + condition:z_age_days +
-                       (1 + condition + hab+ condition:hab + z_age_days + condition:z_age_days | lab_id), 
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition + hab + condition:hab + 
+                       (1 + condition + hab + condition:hab | lab_id),
                         family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
@@ -657,7 +1696,7 @@ brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condit
 
 We can already look at the parameter estimates and their 95% Credible Intervals from this model.
 
-```{r full_estimates, message=FALSE}
+```{r habituation or not full_estimates, message=FALSE}
 brm.info.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
@@ -666,14 +1705,12 @@ brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
 
 Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
 
-```{r full_bridge_habituation}
+```{r habituation or not full_bridge}
 bridge.info.full <- bridge_sampler(brm.info.full, silent = T)
 bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
 ```
 
-### Choice preference * Habituation
-
-Calculate the BF for habituation:condition
+We calculated the BF for the interaction between habituation and condition
 
 ```{r nohabcondition_model, results=FALSE, message=FALSE}
 # Define priors
@@ -684,21 +1721,20 @@ priors.no_condition <- c(set_prior("normal(0, .1)",
                  set_prior("student_t(3, 0, 2)",
                            class = "sd"))
 # Run model
-brm.info.no_hab <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:z_age_days +
-                       (1 + condition + hab +  z_age_days + condition:z_age_days | lab_id), 
+brm.info.no_hab <- brm(chose_helper ~ 1 + condition + hab + 
+                       (1 + condition + hab  | lab_id), 
                      family = bernoulli, data = primary_data,
                      prior = priors.no_condition, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.no_hab <- brm(chose_helper ~ 1 + condition + z_age_days + hab + condition:z_age_days +
-                       (1 + condition + hab +  z_age_days + condition:z_age_days | lab_id), 
+brm.noninfo.no_hab <- brm(chose_helper ~ 1 + condition + hab + 
+                       (1 + condition + hab  | lab_id), 
                         family = bernoulli, data = primary_data,
                         prior = priors.noninformative, iter = 10000, 
                         control = list(adapt_delta = .99, max_treedepth = 20),
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
-We can nom bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
 
 ```{r bayes_nohabcondition}
 # Bridge-sample posterior
@@ -709,14 +1745,13 @@ bf.info.hab <- bf(bridge.info.full, bridge.info.no_hab)
 bf.noninfo.hab <- bf(bridge.noninfo.full, bridge.noninfo.no_hab)
 print(bf.info.hab)
 print(bf.noninfo.hab)
-
 ```
 
 ### Choice preference when habituated
 
-Examine whether infants preferred helper more in the social condition than in the non-social condition when they were habituated 
+We examine whether infants preferred helper more in the social condition than in the non-social condition when they were habituated. 
 
-```{r habituaed, results=FALSE, message=FALSE}
+```{r habituated condition models, results=FALSE, message=FALSE}
 # select data
 hab_data <- subset(primary_data,hab == 1)
 # Define priors
@@ -729,8 +1764,8 @@ priors.no_condition <- c(set_prior("normal(0, .1)",
 priors.noninformative <- set_prior("student_t(3, 0, 2)",
                                    class = "sd")
 # Run model
-brm.info.hab.full <- brm(chose_helper ~ 1 + z_age_days + condition +
-                       (1 + z_age_days + condition| lab_id), 
+brm.info.hab.full <- brm(chose_helper ~ 1 + z_age_days + condition + z_age_days:condition +
+                       (1 + z_age_days + condition + z_age_days:condition| lab_id), 
                      family = bernoulli, data = hab_data,
                      prior = priors.full, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
@@ -741,8 +1776,8 @@ brm.info.hab.no_condition <- brm(chose_helper ~ 1 + z_age_days  +
                      prior = priors.no_condition, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.hab.full <- brm(chose_helper ~ 1 + z_age_days  + condition+
-                       (1 + z_age_days  + condition| lab_id), 
+brm.noninfo.hab.full <- brm(chose_helper ~ 1 + z_age_days + condition + z_age_days:condition +
+                       (1 + z_age_days + condition + z_age_days:condition| lab_id), 
                      family = bernoulli, data = hab_data,
                      prior = priors.noninformative, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
@@ -776,14 +1811,13 @@ brm.info.hab.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.hab.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
-
 ```
 
 ### Choice preference when not habituated
 
-Examine whether infants preferre helper more in the social condition than in the non-social condition when they were not habituated 
+We examine whether infants prefer helper more in the social condition than in the non-social condition when they were not habituated 
 
-```{r nonhabituaed, results=FALSE, message=FALSE}
+```{r nonhabituated condition models, results=FALSE, message=FALSE}
 # select data
 nonhab_data <- subset(primary_data,hab == 0)
 # Define priors
@@ -796,8 +1830,8 @@ priors.no_condition <- c(set_prior("normal(0, .1)",
 priors.noninformative <- set_prior("student_t(3, 0, 2)",
                                    class = "sd")
 # Run model
-brm.info.nonhab.full <- brm(chose_helper ~ 1 + z_age_days + condition +
-                       (1 + z_age_days + condition| lab_id), 
+brm.info.nonhab.full <- brm(chose_helper ~ 1 + z_age_days + condition + z_age_days:condition +
+                       (1 + z_age_days + condition + z_age_days:condition| lab_id), 
                      family = bernoulli, data = nonhab_data,
                      prior = priors.full, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
@@ -808,8 +1842,8 @@ brm.info.nonhab.no_condition <- brm(chose_helper ~ 1 + z_age_days  +
                      prior = priors.no_condition, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.nonhab.full <- brm(chose_helper ~ 1 + z_age_days  + condition+
-                       (1 + z_age_days  + condition| lab_id), 
+brm.noninfo.nonhab.full <- brm(chose_helper ~ 1 + z_age_days + condition + z_age_days:condition +
+                       (1 + z_age_days + condition + z_age_days:condition| lab_id), 
                      family = bernoulli, data = nonhab_data,
                      prior = priors.noninformative, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
@@ -835,12 +1869,204 @@ bf.info.nonhab.condition <- bf(bridge.info.nonhab.full, bridge.info.nonhab.no_co
 bf.noninfo.nonhab.condition <- bf(bridge.noninfo.nonhab.full, bridge.noninfo.nonhab.no_condition)
 print(bf.info.nonhab.condition)
 print(bf.noninfo.nonhab.condition)
-
 ```
 
 ```{r nonhabituated condition parameters, message=FALSE}
 brm.info.nonhab.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.nonhab.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+## exploratory analyses of looking time
+
+### total looking time
+
+To test for the possibility of attentional differences across the Social and Non-Social conditions, we conducted exploratory analyses on infants’ gaze behavior during habituation, and in particular how long they look at the still image of the final frame presented after each video.
+
+We first analyzed the effect of condition.
+
+```{r full_exploratory_model total looking and condition, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+# Run model
+brm.noninfo.looking.full <- brm(total_looking ~ 1 + condition + z_age_days + condition:z_age_days + (1 + condition + z_age_days + condition:z_age_days|lab_id), 
+                         data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+brm.noninfo.looking.no_condition <- brm(total_looking ~ 1 + z_age_days + 
+                                          (1 + z_age_days|lab_id), 
+                        data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r Bayes factor total looking and condition, results=FALSE, message=FALSE}
+# Bridge-sample posterior
+bridge.noninfo.looking.full <- bridge_sampler(brm.noninfo.looking.full, silent = T)
+bridge.noninfo.looking.no_condition <- bridge_sampler(brm.noninfo.looking.no_condition, silent = T)
+
+# Compute Bayes factors
+bf.noninfo.looking.condition <- bf(bridge.noninfo.looking.full, bridge.noninfo.looking.no_condition)
+print(bf.noninfo.looking.condition)
+```
+
+We then analyzed the effect of age by removing the interaction between age and condition from the full model.
+
+```{r full.exploratory_model total looking and age, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+# Run model
+brm.noninfo.looking.no_age <- brm(total_looking ~ 1 + z_age_days + condition  + (1 + z_age_days + condition|lab_id), 
+                        data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+
+```{r Bayes factor total looking time and age, results=FALSE, message=FALSE}
+# Bridge-sample posterior
+bridge.noninfo.looking.full <- bridge_sampler(brm.noninfo.looking.full, silent = T)
+bridge.noninfo.looking.no_age <- bridge_sampler(brm.noninfo.looking.no_age, silent = T)
+
+# Compute Bayes factors
+bf.noninfo.looking.age <- bf(bridge.noninfo.looking.full, bridge.noninfo.looking.no_age)
+print(bf.noninfo.looking.age)
+
+```
+
+```{r total looking time age_plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = total_looking,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("looking time") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) 
+ggsave("age_scatter_looking.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+
+```{r looking time marginal_plot, results=FALSE, message=FALSE}
+# Compute marginal effects
+marginal_effects <- brm.noninfo.looking.full %>%
+  ggpredict(terms = c("z_age_days [all]", "condition")) %>%
+  rename(z_age_days = x,
+         total_looking = predicted,
+         condition = group)
+
+primary_data$condition = factor(primary_data$condition, c("nonsocial","social"))
+marginal_effects$condition = factor(marginal_effects$condition, c("nonsocial","social"))
+
+# Plot data and marginal effects
+scatter.bayes <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = total_looking,
+                      colour = condition,
+                      fill = condition)) +
+  geom_line(data = marginal_effects) +
+  geom_ribbon(alpha = .5, colour = NA,
+              data = marginal_effects,
+              aes(ymin = conf.low,
+                  ymax = conf.high)) +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("Looking time") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial","social"),
+                      labels = c("non-social","social")) +
+  scale_fill_brewer(palette = "Dark2", name = "Condition",
+                   breaks = c("nonsocial","social"),
+                      labels = c("non-social","social")) 
+ggsave("age_scatter_bayes_looking.pdf", scatter.bayes,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter.bayes)
+
+```
+
+
+### looking time in helping/upward condition and in hindering/downward condition
+
+Additional analyses separated infant looking time in helping/upward condition and in hindering/downward condition.Infants looked longer at the still frame in the helping social condition than in the upward non-social condition and looked longer at the still frame in the hindering social condition than in the downward non-social condition. 
+
+```{r up_looking_condition full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.up_looking_condition <- brm(up_looking ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                        data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r up_looking full_estimates of each parameter, message=FALSE}
+brm.noninfo.up_looking_condition %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+```{r down_looking_condition full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.down_looking_condition <- brm(down_looking ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                        data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r down_looking full_estimates of each parameter, message=FALSE}
+brm.noninfo.down_looking_condition %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+```
+
+### compare looking time toward helping vs. hindering scenario
+
+We also compared infants' looking time in helping vs. hindering condition. Infants spent a comparable amount of time looking at the still frame following videos depicting helping/upward movements and videos depicting hindering/downward movements.
+
+```{r up_looking vs. down_looking, message=FALSE}
+library(tidyr)
+short_data <- primary_data[, c("subj_num","up_looking", "down_looking","condition","lab_id")]
+
+# Convert short data to long data
+primary_looking_data <- gather(short_data, key = "identity", value = "time", -subj_num,-lab_id,-condition)
+
+```
+
+```{r up_looking vs. down_looking full_model, results=FALSE, message=FALSE}
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.up_down <- brm(time ~ 1 + condition + identity + condition:identity +
+                       (1 + condition + identity + condition:identity | lab_id), 
+                        data = primary_looking_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r up_looking vs. down_looking full_estimates of each parameter, message=FALSE}
+brm.noninfo.up_down %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
