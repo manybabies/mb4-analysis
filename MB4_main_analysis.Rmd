@@ -679,13 +679,14 @@ clean_data <- clean_data %>%
 First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
 
 ```{r data inspection, message = FALSE}
+clean_data$exclusion <- ifelse(clean_data$ex_critical==1|clean_data$ex_habcrt==1|clean_data$ex_error==1,"excluded",clean_data$exclude_session)
 
 usable_data <- clean_data %>%
   filter(meet_eligibility == "Y",
-         exclude_session == "not_excluded")
+         exclusion == "not_excluded")
 
 breakdown <- clean_data %>% 
-  group_by(meet_eligibility, exclude_session) %>%
+  group_by(meet_eligibility, exclusion) %>%
   summarize(n = n())
 breakdown # table breakdown of exclusions
 
@@ -724,9 +725,10 @@ We now prepare the clean data for the analyses to come.
 primary_data <- choice_filtered_data %>%
   mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 1, 0),
          z_age_days = scale(age_days)) %>%
-  dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days)) 
+  dplyr::select(c(lab_id, subj_num, condition, chose_helper, age_days, z_age_days,total_looking,push_up_identity, push_up_order, push_up_side,touch_both,RA_1_naive,participant_gender,up_looking,down_looking,screen_size_inches,infant_distance_cm,method,RA_number,second_session,hearing_vision,infant_handedness,colorblindness_primaryfamily,choice_experimenter_mask,percent_primarylanguage,num_hab,habituation,num_should))
 
-primary_data$hab <- ifelse(primary_data$hab_trial_num==15,0,1) ## This line of code isn't working but not sure why - Francis
+
+primary_data$hab_trial_num <- ifelse(primary_data$num_hab=="not_habituated",NA,primary_data$num_hab) #number of trials to reach habituation (NA if not habituated)
 ```
 
 # Descriptive results
@@ -915,6 +917,7 @@ ggsave("age_scatter.pdf", scatter,
 We also check how infants in the two conditions performed in general depending on the number of habituation trials.
 
 ```{r number of habituation trial plot, message=FALSE}
+primary_data$hab_trial_num <- as.numeric(primary_data$hab_trial_num)
 scatter <- ggplot(primary_data,
                   aes(x = hab_trial_num,
                       y = chose_helper,
@@ -935,8 +938,9 @@ scatter <- ggplot(primary_data,
 We also check how infants in the two conditions performed in general depending on total looking time during habituation.
 
 ```{r total looking time plot, message=FALSE}
+primary_data$num_should <- as.numeric(primary_data$num_should)
 scatter <- ggplot(primary_data,
-                  aes(x = total_looking/num_hab,
+                  aes(x = total_looking/num_should,
                       y = chose_helper,
                       colour = condition)) +
   stat_smooth(method = "lm") +
@@ -955,6 +959,7 @@ ggsave("age_scatter.pdf", scatter,
 
 
 ```{r total looking time plot, message=FALSE}
+primary_data$habituation <- as.numeric(primary_data$habituation)
 scatter <- ggplot(primary_data,
                   aes(x = habituation,
                       y = chose_helper,
