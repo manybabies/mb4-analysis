@@ -57,7 +57,7 @@ In this section, we check the coding reliability of looking time.
 
 ```{r load data, message=FALSE}
 library(data.table)
-clean_reliability_looking_data <- read_csv(here("main_data", "clean_reliability_looking_data.csv"))
+clean_reliability_looking_data <- read_csv(here("main_data", "clean_reliability_data.csv"))
 # This needs to be downloaded from OSF
 
 looking_reliability <- setDF(data.table::melt(setDT(clean_reliability_looking_data), 
@@ -86,7 +86,7 @@ print(icc_result)
 
 # looking time calculation for later analyses
 
-```{r looking time calculation message=FALSE}
+```{r looking time calculation, message=FALSE}
 clean_data$total_looking <- ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
   ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
   ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
@@ -104,7 +104,7 @@ clean_data$total_looking <- ifelse(is.na(clean_data$trial1_lookingtime_freezefra
 ```
 
 
-```{r looking time in helping and hindering conditions message=FALSE}
+```{r looking time in helping and hindering conditions, message=FALSE}
 clean_data$second_looking <-
   (ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
     ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
@@ -578,8 +578,7 @@ data_check_hab14 <- data_check_hab14 %>%
 tally_hab14 <- data_check_hab14 %>%
   group_by(match) %>%
   summarize(n = n())
-print(tally_hab14) # 16 NA values, which signal potential pyhab errors. Note there are 0 "no", which means rows with values were calculated correctly
-# We will check if this is the case below
+print(tally_hab14) 
 ```
 
 ## Pyhab error checking
@@ -698,6 +697,9 @@ print(tally_exclusion_all)
 First, we perform some checks for whether there are user-level errors in the data
 
 ```{r sanity checking user errors, message = FALSE}
+
+# convert clean_data to data frame so that function below can work
+clean_data <- as.data.frame(clean_data)
 # checking that all labs are merged successfully
 
 lablist <- read_csv(here("main_data", "contributing_lab_list.csv")) 
@@ -716,8 +718,7 @@ nrow(labcounts)
 num <- dim(clean_data)[1]
 lt_matrix <- matrix(0, nrow = num, ncol = 14)
 
-for (j in 1:num)
-{
+for (j in 1:num){
   for (k in 1:12)
   {
     lt_matrix[j,k] <- as.numeric(clean_data[j,4*k-1+46])
@@ -733,16 +734,8 @@ sum(duplicated(lt_matrix))
 
 lt_duplicates <- lt_matrix %>%
   filter(duplicated(lt_matrix) == T) %>%
-  rename(trial1_lookingtime_freezeframe = V1)
+  rename(trial1_lookingtime_freezeframe = V1) # no duplicates #
 
-find_duplicate <- clean_data %>%
-  dplyr::select(c(lab_id, subj_id, trial1_lookingtime_freezeframe)) %>%
-  right_join(lt_duplicates) # Note: reached out to lab about duplicate entry
-
-# As of Nov 28, 2023, this subj needs to be removed
-
-entry_exclude <- find_duplicate %>%
-  dplyr::select(c(lab_id, subj_id))
 
 # checking cb order matches with entry
 
@@ -759,16 +752,15 @@ cb_checks <- clean_data %>%
 
 cb_checks_summary <- cb_checks %>%
   group_by(condition_match, pushup_identity_match, push_up_order_match, push_up_side_match) %>%
-  summarize(n = n()) # some mismatches to be isolated
+  summarize(n = n()) # 1 mismatch, 2 where condition info is NA
 
 cb_checks_isolated <- cb_checks %>%
   filter(condition_match == F | pushup_identity_match == F | push_up_order_match == F | push_up_side_match == F)
 
-# These mismatches need to be excluded for now until corrected
+# These mismatches need to be excluded
 
 entry_exclude_list <- cb_checks_isolated %>%
   dplyr::select(c(lab_id, subj_id)) %>%
-  rbind(entry_exclude) %>%
   mutate(entry_exclude = "Y")
 
 cb_checks_na <- cb_checks %>%
