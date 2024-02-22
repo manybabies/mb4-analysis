@@ -1,7 +1,7 @@
 ---
 title: "MB4 Main Analyses"
-author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, & Francis Yuen"
-date: "11/19/2023"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, & Francis Yuen" (needs to update)
+date: "02/16/2024"
 output:
   html_document: default
   pdf_document: default
@@ -9,14 +9,17 @@ output:
 ### NOTE ###
 
 This is a revised version of "MB4_pilot_analysis.rmd".
-Last updated: January 23rd, 2024
+Last updated: Feb 16th, 2024
+
+add page number in ms
 
 # Introduction
 
-In this document, we conduct and document the pre-registered analyses for the MB4 study.
+In this document, we conduct and document the pre-registered analyses and exploratory analyses for the MB4 study.
 
-```{r load packages, message=FALSE}
-library(tidyverse)
+```{r load packages and functions required for analyses, message=FALSE}
+# packages
+library(tidyverse) 
 library(brms)
 library(binom)
 library(ICCbin)
@@ -29,9 +32,11 @@ library(ggeffects)
 library(MCMCpack)
 library(coda)
 library(future)
-#plan(multiprocess, workers = 4)
+library(irr)
+# plan(multiprocess, workers = 4)
 
-source("StatTools.R")
+# custom functions 
+source("StatTools.R") 
 source("geom_flat_violin.R")
 
 theme_set(theme_bw(base_size = 10))
@@ -40,25 +45,147 @@ set.seed(705)
 knitr::opts_chunk$set(cache = TRUE)
 ```
 
+# Load data
+```{r load main data for analyses}
+clean_data <- read_csv(here("main_data", "clean_data.csv")) # This needs to be downloaded from OSF
+clean_data <- as.data.frame(clean_data)
+```
+# Coding reliability
+
+In this section, we check the coding reliability of looking time.
+
+
+```{r load data, message=FALSE}
+library(data.table)
+clean_reliability_looking_data <- read_csv(here("main_data", "clean_reliability_data.csv"))
+# This needs to be downloaded from OSF
+
+looking_reliability <- setDF(data.table::melt(setDT(clean_reliability_looking_data), 
+                                  id.vars = c("lab_id","subj_id","subj_num"), 
+                                  measure.vars = list(c("trial1_lookingtime_freezeframe","trial2_lookingtime_freezeframe","trial3_lookingtime_freezeframe","trial4_lookingtime_freezeframe","trial5_lookingtime_freezeframe","trial6_lookingtime_freezeframe","trial7_lookingtime_freezeframe","trial8_lookingtime_freezeframe","trial9_lookingtime_freezeframe","trial10_lookingtime_freezeframe","trial11_lookingtime_freezeframe","trial12_lookingtime_freezeframe","trial13_lookingtime_freezeframe","trial14_lookingtime_freezeframe")), 
+                                  value.name = c("rating2")))
+looking_reliability <- plyr::rename(looking_reliability, c(variable="trial"))
+
+looking <- setDF(data.table::melt(setDT(clean_data), 
+                                  id.vars = c("lab_id","subj_id","subj_num"), 
+                                  measure.vars = list(c("trial1_lookingtime_freezeframe","trial2_lookingtime_freezeframe","trial3_lookingtime_freezeframe","trial4_lookingtime_freezeframe","trial5_lookingtime_freezeframe","trial6_lookingtime_freezeframe","trial7_lookingtime_freezeframe","trial8_lookingtime_freezeframe","trial9_lookingtime_freezeframe","trial10_lookingtime_freezeframe","trial11_lookingtime_freezeframe","trial12_lookingtime_freezeframe","trial13_lookingtime_freezeframe","trial14_lookingtime_freezeframe")), 
+                                  value.name = c("rating1")))
+looking <- plyr::rename(looking, c(variable="trial"))
+
+looking_merge <- merge(looking_reliability,looking,by = c("lab_id","subj_id","subj_num","trial"))
+
+
+data_reliability <- looking_merge[, c("rating1", "rating2")]
+data_reliability <- na.omit(data_reliability)
+# Calculate ICC using irr package (NAs are automaticlaly ignored)
+icc_result <- icc(data_reliability, model = "oneway", type = "agreement", unit = "single")
+print(icc_result)
+
+
+```
+
+# looking time calculation for later analyses
+
+```{r looking time calculation, message=FALSE}
+clean_data$total_looking <- ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe) 
+```
+
+
+```{r looking time in helping and hindering conditions, message=FALSE}
+clean_data$second_looking <-
+  (ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
+      ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
+      ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe))/7 
+
+clean_data$first_looking <- (ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
+  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
+    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) )/7
+
+for (i in 1:nrow(clean_data))
+{
+  if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "first")
+{
+  clean_data$up_looking[i] <- clean_data$first_looking[i]
+  clean_data$down_looking[i] <- clean_data$second_looking[i]
+}
+
+if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "second")
+{
+  clean_data$up_looking[i] <- clean_data$second_looking[i]
+  clean_data$down_looking[i] <- clean_data$first_looking[i]
+}
+}
+
+
+```
+
+
 # Data inspection
 
 In this section, we calculate exclusion rates for the various exclusion reasons.
 
 
-```{r load data, message=FALSE}
-clean_data <- read_csv(here("main_data", "clean_data.csv")) # This needs to be downloaded from OSF
-
+```{r prepare data for looking time calculation, message=FALSE}
 num <- nrow(clean_data)
 # extract the data of looking time
 column_number_start <- which(names(clean_data) == "trial1_sawcriticalevent")
 column_number_end <- which(names(clean_data) == "trial14_numrepeats")
 
 data <- clean_data[1:num,column_number_start:column_number_end]
+data <- as.data.frame(data)
+```
+
+## experimenter error (based on looking time data) a
+
+```{r examine experimenter error based on looking time data, message=FALSE}
+clean_data$experimenter_error = 0 # 0 indicates no exclusion, 1 indicates exclusion due to experimenter error of presenting stimuli incorrectly
+
+for (j in 1:num)
+{
+  
+   for (i in 1:14)
+   {
+     if (!is.na(data[j,4*i-3])&!is.na(data[j,4*i]))
+     if (data[j,4*i-3] == "N" & data[j,4*i] != "2")
+     {
+       clean_data$experimenter_error[j] =1
+       break
+       }
+   }
+}
+
+
+# Tally
+experimentererror_tally <- clean_data %>%
+  group_by(experimenter_error) %>%
+  summarize(n = n())
+print(experimentererror_tally)
 ```
 
 ## Missing critical period
 
-First, we calculate the number of participants excluded because labs report they missed at least one critical period for 3 consecutive times.
+First, we calculate the number of participants excluded because labs report they missed at least one critical period for 3 consecutive times (after excluding experimenter error).
 
 ```{r calculate lab reported missing crit period, message=FALSE}
 # Create column "ex_critical" to indicate whether participants missed critical period on ANY trial
@@ -69,13 +196,10 @@ clean_data$ex_critical <- 0 # 0 indicates no exclusion, 1 indicates exclusion du
 # Loop checks columns "trialX_sawcriticalevent" where X ranges from 1 to 14
 # If ANY of the columns marked "N", then "ex_critical" changed from 0 to 1 to indicate exclusion
 for (j in 1:num)
-  
-{
-  
+{ 
   for (i in 1:14)
   {
-    
-    if (!is.na(data[j,4*i-3]))
+    if (!is.na(data[j,4*(i-1)+1]))
     {
           if (data[j,4*i-3]=="N")
     {
@@ -83,22 +207,21 @@ for (j in 1:num)
        break
     }
     }
-
-   
-    
   }
-  
 }
+
 
 # Tally
 misscrit_tally <- clean_data %>%
   group_by(ex_critical) %>%
   summarize(n = n())
 print(misscrit_tally)
-```
-## Failure to set habituation criteria
 
-Next, we calculate *theoretically* whether an infant set a habituation criteria. Note that we need to check this due to a PyHab error where habituation criteria is still set at trial 3 even if looking time during trials 1-3 did not exceed the threshold of 12s.
+
+```
+## Failure to set habituation criteria 
+
+Next, we calculate *theoretically* whether an infant set a habituation criteria. Note that we need to check this due to a PyHab error where habituation criteria is still set at trial 3 even if looking time during trials 1-3 did not exceed the threshold of 12s 
 ```{r failure to set a habituation criteria}
 
 clean_data$ex_habcrt <- 1 # 0 indicates no exclusion, 1 indicates exclusion due to the failure to set a habituation criteria
@@ -106,24 +229,19 @@ clean_data$ex_habcrt <- 1 # 0 indicates no exclusion, 1 indicates exclusion due 
 # This loop checks the lookingtime freezeframe sum of 3 consecutive trials, starting from trial 1 and ending at trial 4
 # This yields possible combinations trial 1-3, 2-4, 3-5, and 4-6
 # The first time this sum exceeds 12s, hab criteria is considered "set"
+
 for (j in 1:num)
-  
 {
-  
   for (i in 1:4)
   {
-    
      if (!is.na(data[j,4*i-1]) & !is.na(data[j,4*(i+1)-1]) & !is.na(data[j,4*(i+2)-1]))
      {
-    if ((as.numeric(data[j,4*i-1])+as.numeric(data[j,4*(i+1)-1])+as.numeric(data[j,4*(i+2)-1]))>=12 )
-    {
+    if ((as.numeric(data[j,4*i-1])+as.numeric(data[j,4*(i+1)-1])+as.numeric(data[j,4*(i+2)-1]))>=12) 
+      {
       clean_data$ex_habcrt[j]=0
-    }
+      }
      }
-    
-
   }
-  
 }
 
 # Tally 
@@ -151,57 +269,55 @@ Next, we calculate whether or not an infant habituated, and on which trial they 
 # num_should: the number of trials that infants should see (when habituation was reached or 14 when not habituated)
 
 # num_see: the number of trials infants ACTUALLY saw. If this does not match num_should, this indicates an error
+
+clean_data_backup <- clean_data
+
 ```
 
 
 ```{r habituation or not}
+clean_data <- clean_data_backup
 
 clean_data$habituation <- 0 
 clean_data$num_hab <- 0 
 
- 
+
 for (j in 1:num)
+  
   
 {
   for (k in 1:4)
   {
-    if (!is.na(data[j,4*k-1]) & !is.na(data[j,4*(k+1)-1]) & !is.na(data[j,4*(k+2)-1]))
-   if ((as.numeric(data[j,4*k-1])+as.numeric(data[j,4*(k+1)-1])+as.numeric(data[j,4*(k+2)-1]))>12)
-   {
+   if (!is.na(data[j,4*k-1]) & !is.na(data[j,4*(k+1)-1]) & !is.na(data[j,4*(k+2)-1])& (as.numeric(data[j,4*k-1])+as.numeric(data[j,4*(k+1)-1])+as.numeric(data[j,4*(k+2)-1]))>=12)
+     {
      clean_data$habcrt_value[j] = (as.numeric(data[j,4*k-1])+as.numeric(data[j,4*(k+1)-1])+as.numeric(data[j,4*(k+2)-1]))/2
      clean_data$num_habcrt[j] = k+2
      break
-   }
-    else
-    {clean_data$habcrt_value[j] = 0}
-    
-    
+     }
+     else
+     {clean_data$habcrt_value[j] = 0}
   }
   
+
   numhabcrt <- clean_data$num_habcrt[j] + 1
   for (i in numhabcrt:12)
   {
-    
-    
     if (!is.na(data[j,4*(i+2)-1]))
-        
     {
         sumcrt = as.numeric(data[j,4*i-1])+as.numeric(data[j,4*(i+1)-1])+as.numeric(data[j,4*(i+2)-1])
         #print(sumcrt)
         if (!is.na(sumcrt))
         {
-
-        if (sumcrt< clean_data$habcrt_value[j]) 
-    {
-      clean_data$habituation[j]=1
-      clean_data$num_hab[j] = i+2
+          if (sumcrt< clean_data$habcrt_value[j]) 
+         {
+          clean_data$habituation[j]=1
+          clean_data$num_hab[j] = i+2
+         }
         }
-                    
-        }
-      
     }
-    
   }
+  
+ 
   
 }
 
@@ -224,12 +340,13 @@ clean_data <- clean_data %>%
          )
 
 
+
 # set the values of participants that should be excluded as NAs
 # If they are excluded because of missing critical period, then habituation should be set to NA because it's irrelevant whether they habituated
 # Also, num_hab should be set to NA for the same reason
 # However, we will set them as "not_interpretable" instead of "NA" in order to be able to differentiate them from error values generated by bad code
 
-clean_data <- clean_data %>%
+clean_data_tmp <- clean_data %>%
   mutate(habituation = ifelse(clean_data$ex_critical==1,
                               "not_interpretable",
                               clean_data$habituation),
@@ -243,27 +360,49 @@ clean_data <- clean_data %>%
 # If they were excluded for failing to set habituation criteria, then all of the following values should be NA since they are not interpretable
 # As above, we will set them as "not_interpretable" instead of "NA" in order to be able to differentiate them from error values generated by bad code
 
-clean_data <- clean_data %>%
-  mutate(habituation = ifelse(clean_data$ex_habcrt == 1,
+clean_data_tmp <- clean_data_tmp %>%
+  mutate(habituation = ifelse(clean_data_tmp$ex_habcrt == 1,
                               "not_interpretable",
-                              clean_data$habituation),
-         habcrt_value = ifelse(clean_data$ex_habcrt == 1,
+                              clean_data_tmp$habituation),
+         habcrt_value = ifelse(clean_data_tmp$ex_habcrt == 1,
                               "not_interpretable",
-                              clean_data$habcrt_value),
-         num_habcrt = ifelse(clean_data$ex_habcrt == 1,
+                              clean_data_tmp$habcrt_value),
+         num_habcrt = ifelse(clean_data_tmp$ex_habcrt == 1,
                               "not_interpretable",
-                              clean_data$num_habcrt),
-         num_hab = ifelse(clean_data$ex_habcrt == 1,
+                              clean_data_tmp$num_habcrt),
+         num_hab = ifelse(clean_data_tmp$ex_habcrt == 1,
                               "not_interpretable",
-                              clean_data$num_hab),
-         num_should = ifelse(clean_data$ex_habcrt == 1,
+                              clean_data_tmp$num_hab),
+         num_should = ifelse(clean_data_tmp$ex_habcrt == 1,
                              "not_interpretable",
-                             clean_data$num_should))
+                             clean_data_tmp$num_should))
+
+clean_data_tmp <- clean_data_tmp %>%
+  mutate(habituation = ifelse(clean_data_tmp$experimenter_error == 1,
+                              "not_interpretable",
+                              clean_data_tmp$habituation),
+         habcrt_value = ifelse(clean_data_tmp$experimenter_error == 1,
+                              "not_interpretable",
+                              clean_data_tmp$habcrt_value),
+         num_habcrt = ifelse(clean_data_tmp$experimenter_error == 1,
+                              "not_interpretable",
+                              clean_data_tmp$num_habcrt),
+         num_hab = ifelse(clean_data_tmp$experimenter_error == 1,
+                              "not_interpretable",
+                              clean_data_tmp$num_hab),
+         num_should = ifelse(clean_data_tmp$experimenter_error == 1,
+                             "not_interpretable",
+                             clean_data_tmp$num_should))
 
 ```
+
+```{r remove temperary data}
+clean_data <- clean_data_tmp
+```
+
 ## Sanity checking habituation related factors
 
-### Habituation criteria checks
+### Habituation criteria checks 
 
 ```{r sanity check for habituation criteria, message = FALSE}
 data$habcrt_value <- clean_data$habcrt_value
@@ -310,10 +449,6 @@ tally_hab3 <- data_check_3 %>%
   summarize(n = n())
 print(tally_hab3)
 
-# There is one problem case here; still need to figure out who and why there is a mismatch
-# It seems the loop calculated 0 for this participant's habituation criteria
-problem_cases_hab3 <- data_check_3 %>%
-  filter(match != "yes")
 
 # Isolate participants who set habituation at trial 4
 data_check_4 <- subset(data_check,num_habcrt==4)
@@ -339,10 +474,6 @@ tally_hab5 <- data_check_5 %>%
   summarize(n = n())
 print(tally_hab5)
 
-# There are 2 problem case here; looks like might just be a rounding mismatch, fine to ignore
-problem_cases_hab5 <- data_check_5 %>%
-  filter(match != "yes")
-
 
 # Isolate participants who set habituation at trial 6
 data_check_6 <- subset(data_check,num_habcrt==6)
@@ -356,9 +487,6 @@ tally_hab6 <- data_check_6 %>%
   summarize(n = n())
 print(tally_hab6)
 
-# There are 2 problem case here; looks like might just be a rounding mismatch, fine to ignore
-problem_cases_hab6 <- data_check_6 %>%
-  filter(match != "yes")
 ```
 ### Checking number of trials to set habituation criterion
 
@@ -422,14 +550,16 @@ print(tally_hab6)
 range_tally <- data %>%
   group_by(num_hab) %>%
   summarize(n = n())
-
+print(range_tally)
 
 # First we check infants who habituated on trial 6. This also means they set their habcrt on trial 3
 data_check_hab6 <- subset(data_check,num_hab==6)
 data_check_hab6 <- data_check_hab6 %>%
   mutate(sum_4to6 = trial4_lookingtime_freezeframe + trial5_lookingtime_freezeframe + trial6_lookingtime_freezeframe,
-         habituated_at_6 = ifelse(sum_4to6 <= habcrt_value, "yes", "no"),
+         habituated_at_6 = ifelse(sum_4to6 <= as.numeric(habcrt_value), "yes", "no"),
          .after = habcrt_value)
+
+
 tally_hab6 <- data_check_hab6 %>%
   group_by(habituated_at_6) %>%
   summarize(n = n())
@@ -442,14 +572,13 @@ print(tally_hab6) # all correct
 data_check_hab14 <- subset(data_check,num_hab==14 & ex_critical == 0 & ex_habcrt == 0)
 data_check_hab14 <- data_check_hab14 %>%
   mutate(sum_12to14 = trial12_lookingtime_freezeframe + trial13_lookingtime_freezeframe + trial14_lookingtime_freezeframe,
-         habituated_at_14 = ifelse(sum_12to14 <= habcrt_value, 1, 0),
+         habituated_at_14 = ifelse(sum_12to14 <= as.numeric(habcrt_value), 1, 0),
          match = ifelse(habituation == habituated_at_14, "yes", "no"),
          .after = habcrt_value)
 tally_hab14 <- data_check_hab14 %>%
   group_by(match) %>%
   summarize(n = n())
-print(tally_hab14) # 16 NA values, which signal potential pyhab errors. Note there are 0 "no", which means rows with values were calculated correctly
-# We will check if this is the case below
+print(tally_hab14) 
 ```
 
 ## Pyhab error checking
@@ -466,16 +595,13 @@ for (j in 1:num)
 {
   for (k in 1:14)
   {
-    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k-3]) & is.na(data[j,4*k]))
+    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k]))
     {
      clean_data$num_see[j] = k-1
      break
     }
-
     else
     {clean_data$num_see[j] = 14}
-    
-    
   }
 }
 
@@ -488,93 +614,122 @@ clean_data$ex_error <- ifelse((clean_data$num_should == clean_data$num_see)| # n
 tally_pyhaberror <- clean_data %>%
   group_by(ex_error) %>%
   summarize(n = n())
+print(tally_pyhaberror)
 
 # Inspect problem cases
 pyhaberror_cases <- clean_data %>%
   filter(ex_error == 1)
-  
 
 ```
+# check the overlap with equipment error reported by labs
 
-```{r calculate error number only due to phyhab error}
-error <- subset(clean_data,ex_error==1 & ex_critical==0 & ex_habcrt==0)
+```{r calculate error number only due to phyhab error (equipment error)}
+error <- subset(clean_data,ex_error==1 & ex_critical==0 & ex_habcrt==0 & experimenter_error==0)
 nrow(error)
 
 ```
 
-```{r new exclusion column}
-# change exclusion column (missing critical periods, no habituation criteria, error phyhab)
-clean_data$exclusion_exp <- 0
+## number for each type of exclusion 
 
-for (i in 1:num)
-{
-  if (clean_data$ex_critical[i]==1|clean_data$ex_habcrt[i]==1|clean_data$ex_error[i]==1)
-  {
-     clean_data$exclusion_exp[i] <- 1
-  }
+We generate the number of excluded participants for each exclusion type: 
+'DevDisorder', 'Preterm', 'FailToSetHabCrit', 'FailToViewCritPeriod', 'FailToMakeChoice', 'OutsideInterference', 'ExperimenterError', 'EquipmentError', 'FussOut'
  
-}
-```
+````{r exclusion based on lab report, message=FALSE}
+# 1 indicates "excluded", 0 indicates "non-excluded"
 
-```{r looking time calculation message=FALSE}
-clean_data$total_looking <- ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe) 
-```
+clean_data$ex_Preterm <- ifelse((clean_data$exclusion_type_1 == "Preterm"|clean_data$exclusion_type_2 == "Preterm"|clean_data$exclusion_type_3 == "Preterm"|clean_data$exclusion_type_4 == "Preterm"),1,0)
+print(paste0("Preterm:",sum(clean_data$ex_Preterm,na.rm = TRUE)))
+print(sum(clean_data$ex_Preterm,na.rm = TRUE)/nrow(clean_data))
 
+clean_data$ex_DevDisorder <- ifelse((clean_data$exclusion_type_1 == "DevDisorder"|clean_data$exclusion_type_2 == "DevDisorder"|clean_data$exclusion_type_3 == "DevDisorder"|clean_data$exclusion_type_4 == "DevDisorder"),1,0)
+print(paste0("DevDisorder:",sum(clean_data$ex_DevDisorder,na.rm = TRUE)))
+print(sum(clean_data$ex_DevDisorder,na.rm = TRUE)/nrow(clean_data))
 
-```{r looking time in helping and hindering conditions message=FALSE}
-clean_data$second_looking <-
-  (ifelse(is.na(clean_data$trial2_lookingtime_freezeframe),0,clean_data$trial2_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial4_lookingtime_freezeframe),0,clean_data$trial4_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial6_lookingtime_freezeframe),0,clean_data$trial6_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial8_lookingtime_freezeframe),0,clean_data$trial8_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial10_lookingtime_freezeframe),0,clean_data$trial10_lookingtime_freezeframe) +
-      ifelse(is.na(clean_data$trial12_lookingtime_freezeframe),0,clean_data$trial12_lookingtime_freezeframe) +
-      ifelse(is.na(clean_data$trial14_lookingtime_freezeframe),0,clean_data$trial14_lookingtime_freezeframe))/7 
+clean_data$ex_FailToMakeChoice <- ifelse((clean_data$exclusion_type_1 == "FailToMakeChoice"|clean_data$exclusion_type_2 == "FailToMakeChoice"|clean_data$exclusion_type_3 == "FailToMakeChoice"|clean_data$exclusion_type_4 == "FailToMakeChoice"),1,0)
+print(paste0("FailToMakeChoice:",sum(clean_data$ex_FailToMakeChoice,na.rm = TRUE)))
+print(sum(clean_data$ex_FailToMakeChoice,na.rm = TRUE)/nrow(clean_data))
 
-clean_data$first_looking <- (ifelse(is.na(clean_data$trial1_lookingtime_freezeframe),0,clean_data$trial1_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial3_lookingtime_freezeframe),0,clean_data$trial3_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial5_lookingtime_freezeframe),0,clean_data$trial5_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial7_lookingtime_freezeframe),0,clean_data$trial7_lookingtime_freezeframe) +
-  ifelse(is.na(clean_data$trial9_lookingtime_freezeframe),0,clean_data$trial9_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial11_lookingtime_freezeframe),0,clean_data$trial11_lookingtime_freezeframe) +
-    ifelse(is.na(clean_data$trial13_lookingtime_freezeframe),0,clean_data$trial13_lookingtime_freezeframe) )/7
+clean_data$ex_OutsideInterference <- ifelse((clean_data$exclusion_type_1 == "OutsideInterference"|clean_data$exclusion_type_2 == "OutsideInterference"|clean_data$exclusion_type_3 == "OutsideInterference"|clean_data$exclusion_type_4 == "OutsideInterference"),1,0)
+print(paste0("OutsideInterference:",sum(clean_data$ex_OutsideInterference,na.rm = TRUE)))
+print(sum(clean_data$ex_OutsideInterference,na.rm = TRUE)/nrow(clean_data))
 
-for (i in 1:nrow(clean_data))
-{
-  if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "first")
-{
-  clean_data$up_looking[i] <- clean_data$first_looking[i]
-  clean_data$down_looking[i] <- clean_data$second_looking[i]
-}
+clean_data$ex_ExperimenterError <- ifelse((clean_data$exclusion_type_1 == "ExperimenterError"|clean_data$exclusion_type_2 == "ExperimenterError"|clean_data$exclusion_type_3 == "ExperimenterError"|clean_data$exclusion_type_4 == "ExperimenterError"),1,0)
+clean_data$ex_ExperimenterError <- ifelse(clean_data$experimenter_error==1,1,clean_data$ex_ExperimenterError)
+#incorporate experimenter error based on looking time
+print(paste0("ExperimenterError:",sum(clean_data$ex_ExperimenterError,na.rm = TRUE)))
+print(sum(clean_data$ex_ExperimenterError,na.rm = TRUE)/nrow(clean_data))
 
-if (!is.na(clean_data$push_up_order[i]) & clean_data$push_up_order[i] == "second")
-{
-  clean_data$up_looking[i] <- clean_data$second_looking[i]
-  clean_data$down_looking[i] <- clean_data$first_looking[i]
-}
-}
+clean_data$ex_EquipmentError <- ifelse((clean_data$exclusion_type_1 == "EquipmentError"|clean_data$exclusion_type_2 == "EquipmentError"|clean_data$exclusion_type_3 == "EquipmentError"|clean_data$exclusion_type_4 == "EquipmentError"),1,0)
+clean_data$ex_EquipmentError <- ifelse(clean_data$ex_error==1,1,clean_data$ex_EquipmentError)
+#incorporate pyhab error
+print(paste0("EquipmentError:",sum(clean_data$ex_EquipmentError,na.rm = TRUE)))
+print(sum(clean_data$ex_EquipmentError,na.rm = TRUE)/nrow(clean_data))
 
+clean_data$ex_FussOut <- ifelse((clean_data$exclusion_type_1 == "FussOut"|clean_data$exclusion_type_2 == "FussOut"|clean_data$exclusion_type_3 == "FussOut"|clean_data$exclusion_type_4 == "FussOut"),1,0)
+print(paste0("FussOut:",sum(clean_data$ex_FussOut,na.rm = TRUE)))
+print(sum(clean_data$ex_FussOut,na.rm = TRUE)/nrow(clean_data))
+
+count_FailToViewCritPeriod <- sum(clean_data$ex_critical, na.rm = TRUE)
+print(paste0("FailToViewCritPeriod:",count_FailToViewCritPeriod))
+print(count_FailToViewCritPeriod/nrow(clean_data))
+
+count_FailToSetHabCrit <- sum(clean_data$ex_habcrt, na.rm = TRUE)
+print(paste0("FailToSetHabCrit:",count_FailToSetHabCrit))
+print(count_FailToSetHabCrit/nrow(clean_data))
 
 ```
+
+## new exclusion column including all types
+
+```{r exclusion_all column}
+clean_data$exclusion <- ifelse(clean_data$ex_DevDisorder==1 | clean_data$ex_Preterm==1 | clean_data$ex_FailToMakeChoice==1 | clean_data$ex_OutsideInterference==1 |  clean_data$ex_ExperimenterError==1 | clean_data$ex_EquipmentError==1 | clean_data$ex_FussOut==1 |clean_data$ex_critical==1 | clean_data$ex_habcrt==1,"excluded",NA)
+
+clean_data$exclusion <- ifelse(is.na(clean_data$exclusion),"not_excluded","excluded")
+
+tally_exclusion_all <- clean_data %>%
+  group_by(exclusion) %>%
+  summarize(n = n())
+print(tally_exclusion_all)
+
+```
+
+## Checking exclusion by lab id
+
+Not to interpret, but to check for any systematic issues or errors in code that is overexcluding infants from labs
+
+```{r checking exclusion by lab id, message = FALSE}
+exclusion_by_lab <- clean_data %>%
+  group_by(lab_id) %>%
+  count(exclusion) %>%
+  pivot_wider(names_from = exclusion,
+              values_from = n) %>%
+  replace(is.na(.), 0) %>%
+  mutate(proportion_excluded = excluded / (excluded + not_excluded)) %>%
+  filter(proportion_excluded > .75)
+
+# Three labs have higher than 75% exclusion. Closer inspection to see what happened
+# Ignore UIWCARL since n = 3
+
+high_ex_labs <- clean_data %>%
+  filter(lab_id == "biccbabylab" | lab_id == "mecdmpihcbs",
+         exclusion == "excluded") %>%
+  group_by(lab_id, ex_habcrt) %>%
+  summarize(n = n())
+
+# extremely high exclusion rates because hab criteria never set
+
+
+```
+
 
 ## Basic Sanity checks
 
 First, we perform some checks for whether there are user-level errors in the data
 
 ```{r sanity checking user errors, message = FALSE}
+
+# convert clean_data to data frame so that function below can work
+clean_data <- as.data.frame(clean_data)
 # checking that all labs are merged successfully
 
 lablist <- read_csv(here("main_data", "contributing_lab_list.csv")) 
@@ -593,8 +748,7 @@ nrow(labcounts)
 num <- dim(clean_data)[1]
 lt_matrix <- matrix(0, nrow = num, ncol = 14)
 
-for (j in 1:num)
-{
+for (j in 1:num){
   for (k in 1:12)
   {
     lt_matrix[j,k] <- as.numeric(clean_data[j,4*k-1+46])
@@ -610,16 +764,8 @@ sum(duplicated(lt_matrix))
 
 lt_duplicates <- lt_matrix %>%
   filter(duplicated(lt_matrix) == T) %>%
-  rename(trial1_lookingtime_freezeframe = V1)
+  rename(trial1_lookingtime_freezeframe = V1) # no duplicates #
 
-find_duplicate <- clean_data %>%
-  dplyr::select(c(lab_id, subj_id, trial1_lookingtime_freezeframe)) %>%
-  right_join(lt_duplicates) # Note: reached out to lab about duplicate entry
-
-# As of Nov 28, 2023, this subj needs to be removed
-
-entry_exclude <- find_duplicate %>%
-  dplyr::select(c(lab_id, subj_id))
 
 # checking cb order matches with entry
 
@@ -636,16 +782,15 @@ cb_checks <- clean_data %>%
 
 cb_checks_summary <- cb_checks %>%
   group_by(condition_match, pushup_identity_match, push_up_order_match, push_up_side_match) %>%
-  summarize(n = n()) # some mismatches to be isolated
+  summarize(n = n()) # 1 mismatch, 2 where condition info is NA
 
 cb_checks_isolated <- cb_checks %>%
   filter(condition_match == F | pushup_identity_match == F | push_up_order_match == F | push_up_side_match == F)
 
-# These mismatches need to be excluded for now until corrected
+# These mismatches need to be excluded
 
 entry_exclude_list <- cb_checks_isolated %>%
   dplyr::select(c(lab_id, subj_id)) %>%
-  rbind(entry_exclude) %>%
   mutate(entry_exclude = "Y")
 
 cb_checks_na <- cb_checks %>%
@@ -679,8 +824,6 @@ clean_data <- clean_data %>%
 First we check for eligibility, exclusions, and any other potential exclusions (e.g., incorrect age)
 
 ```{r data inspection, message = FALSE}
-clean_data$exclusion <- ifelse(clean_data$ex_critical==1|clean_data$ex_habcrt==1|clean_data$ex_error==1,"excluded",clean_data$exclude_session)
-
 usable_data <- clean_data %>%
   filter(meet_eligibility == "Y",
          exclusion == "not_excluded")
@@ -797,73 +940,7 @@ print(distance_max)
 
 ```
 
-We generate the number of excluded participants for each exclusion type: 
-'DevDisorder', 'Preterm', 'FailToSetHabCrit', 'FailToViewCritPeriod', 'FailToMakeChoice', 'OutsideInterference', 'ExperimenterError', 'EquipmentError', 'FussOut'
- 
-```{r exclusion, message=FALSE}
-count_Preterm <- sum(clean_data$exclusion_type_1 == "Preterm", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "Preterm", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "Preterm", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "Preterm", na.rm = TRUE)
-print(paste0("Preterm:",count_Preterm))
-print(count_Preterm/nrow(clean_data))
 
-count_DevDisorder <- sum(clean_data$exclusion_type_1 == "DevDisorder", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "DevDisorder", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "DevDisorder", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "DevDisorder", na.rm = TRUE)
-print(paste0("DevDisorder:",count_DevDisorder))
-print(count_DevDisorder/nrow(clean_data))
-
-count_FailToMakeChoice <- sum(clean_data$exclusion_type_1 == "FailToMakeChoice", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "FailToMakeChoice", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "FailToMakeChoice", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "FailToMakeChoice", na.rm = TRUE)
-print(paste0("FailToMakeChoice:",count_FailToMakeChoice))
-print(count_FailToMakeChoice/nrow(clean_data))
-
-count_OutsideInterference <- sum(clean_data$exclusion_type_1 == "OutsideInterference", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "OutsideInterference", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "OutsideInterference", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "OutsideInterference", na.rm = TRUE)
-print(paste0("OutsideInterference:",count_OutsideInterference))
-print(count_OutsideInterference/nrow(clean_data))
-
-count_ExperimenterError <- sum(clean_data$exclusion_type_1 == "ExperimenterError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "ExperimenterError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "ExperimenterError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "ExperimenterError", na.rm = TRUE)
-print(paste0("ExperimenterError:",count_ExperimenterError))
-print(count_ExperimenterError/nrow(clean_data))
-
-count_EquipmentError <- sum(clean_data$exclusion_type_1 == "EquipmentError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "EquipmentError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "EquipmentError", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "EquipmentError", na.rm = TRUE)
-print(paste0("EquipmentError:",count_EquipmentError))
-print(count_EquipmentError/nrow(clean_data))
-
-count_FussOut <- sum(clean_data$exclusion_type_1 == "FussOut", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_2 == "FussOut", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_3 == "FussOut", na.rm = TRUE)+
-  sum(clean_data$exclusion_type_4 == "FussOut", na.rm = TRUE)
-print(paste0("FussOut:",count_FussOut))
-print(count_FussOut/nrow(clean_data))
-
-
-count_FailToSetHabCrit <- sum(clean_data$ex_habcrt)
-print(paste0("FailToSetHabCrit:",count_FailToSetHabCrit))
-print(count_FailToSetHabCrit/nrow(clean_data))
-
-count_FailToViewCritPeriod <- sum(clean_data$ex_critical) 
-print(paste0("FailToViewCritPeriod:",count_FailToViewCritPeriod))
-print(count_FailToViewCritPeriod/nrow(clean_data))
-
-count_PyhabError <- sum(clean_data$ex_error) 
-print(paste0("Error trial number:",count_PyhabError))
-print(count_PyhabError/nrow(clean_data))
-
-```
 
 ```{r add exclusion rate due to failure to make a choice for each lab, message=FALSE}
 choice_exclusion <- clean_data %>%
@@ -976,6 +1053,24 @@ scatter <- ggplot(primary_data,
     scale_x_continuous(breaks = c(0, 1),
                      labels = c("Not habituated", "Habituated"))
 ggsave("age_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+```{r total screen, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = screen_size_inches,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("screen size (inches)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("screen_size_inches_scatter.pdf", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -2093,4 +2188,122 @@ brm.noninfo.up_down <- brm(time ~ 1 + condition + identity + condition:identity 
 ```{r up_looking vs. down_looking full_estimates of each parameter, message=FALSE}
 brm.noninfo.up_down %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+```
+
+## Frequentist analysis
+
+### First with glmmTMB (Nico)
+
+```{r load packages, message=FALSE}
+# should be move at the beginning of the script once stable
+library(glmmTMB)
+library(DHARMa)
+```
+
+### FULL MODEL as specified by Yiyi
+
+```{r full_preregistered_model_glmmTMB message=FALSE}
+# Define and summarize model - note that we removed correlations between random effects for convergence
+full_model <- glmmTMB(chose_helper ~ 1 + condition + z_age_days + 
+                  condition:z_age_days + 
+                  (1 + condition + z_age_days + condition:z_age_days || lab_id), 
+                data = primary_data, family = binomial)
+summary(full_model)
+# No significant effects
+```
+
+### Run model diagnostics using DHARMa
+
+```{r full_model_diagnostic_glmmTMB message=FALSE}
+full_model_sim <- simulateResiduals(full_model)
+plot(full_model_sim) # No problems found
+
+# Plot the results for visual inspection 
+plot(ggpredict(full_model, c("z_age_days[all]", "condition")))
+```
+
+### REDUCED MODEL
+
+```{r reduced_model_glmmTMB message=FALSE}
+# Define and summarize model
+reduced_model <- glmmTMB(chose_helper ~ 1 + condition + z_age_days + 
+                     (1 + condition + z_age_days + condition:z_age_days || lab_id), 
+                   data = primary_data, family = binomial)
+summary(reduced_model)
+# No significant effects
+
+# Run model diagnostics using DHARMa
+# reduced_model_sim <- simulateResiduals(reduced_model)
+# plot(reduced_model_sim) # No problems found
+
+# Plot the results for visual inspection
+# plot(ggpredict(reduced_model, c("z_age_days[all]", "condition")))
+```
+
+### LANGUAGE MODEL
+
+```{r language_model_glmmTMB message=FALSE}
+# Define and summarize model
+language_model <- glmmTMB(chose_helper ~ z_age_days * condition + 
+          percent_primarylanguage + percent_primarylanguage:condition + 
+          (1 + condition + z_age_days + condition:z_age_days || lab_id), data = primary_data, family = binomial)
+summary(language_model)
+# No significant effects
+
+# Run model diagnostics using DHARMa
+# language_model_sim <- simulateResiduals(language_model)
+# plot(language_model_sim) # No problems found
+```
+
+### Plot the results for visual inspection
+
+```{r language_model__plot_glmmTMB message=FALSE}
+
+plot(ggpredict(language_model, c("z_age_days[all]", "percent_primarylanguage[50, 75, 100]", "condition")))
+```
+
+
+### Now with lme4 (Julien)
+
+```{r load packages, message=FALSE}
+# should be move at the beginning of the script once stable
+library(lme4)
+library(DHARMa)
+```
+
+### FULL MODEL as specified by Yiyi (lme4 version)
+
+```{r full_preregistered_model_lme4 message=FALSE}
+# Define and summarize model - note that we can keep correlations between random effects here with lme4
+full_model_lme4 <- glmer(chose_helper ~ 1 + condition + z_age_days + 
+                  condition:z_age_days + 
+                  (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+summary(full_model_lme4)
+# No significant effects
+```
+
+### Run model diagnostics using DHARMa
+
+```{r full_model_diagnostic_glmmTMB message=FALSE}
+full_model_sim_lme4 <- simulateResiduals(full_model_lme4)
+plot(full_model_sim_lme4) # No problems found
+
+# Plot the results for visual inspection 
+plot(ggpredict(full_model_lme4, c("z_age_days[all]", "condition")))
+```
+
+### REDUCED MODEL - LME4
+
+```{r reduced_model_lme4 message=FALSE}
+# Define and summarize model - note that we can keep correlations between random effects here with lme4
+reduced_model_lme4 <- glmer(chose_helper ~ 1 + condition + z_age_days + 
+                  (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+summary(reduced_model_lme4)
+# No significant effects
 ```
