@@ -595,7 +595,7 @@ for (j in 1:num)
 {
   for (k in 1:14)
   {
-    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k-3]) & is.na(data[j,4*k]))
+    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k]))
     {
      clean_data$num_see[j] = k-1
      break
@@ -626,6 +626,7 @@ pyhaberror_cases <- clean_data %>%
 ```{r calculate error number only due to phyhab error (equipment error)}
 error <- subset(clean_data,ex_error==1 & ex_critical==0 & ex_habcrt==0 & experimenter_error==0)
 nrow(error)
+
 ```
 
 ## number for each type of exclusion 
@@ -691,6 +692,35 @@ tally_exclusion_all <- clean_data %>%
 print(tally_exclusion_all)
 
 ```
+
+## Checking exclusion by lab id
+
+Not to interpret, but to check for any systematic issues or errors in code that is overexcluding infants from labs
+
+```{r checking exclusion by lab id, message = FALSE}
+exclusion_by_lab <- clean_data %>%
+  group_by(lab_id) %>%
+  count(exclusion) %>%
+  pivot_wider(names_from = exclusion,
+              values_from = n) %>%
+  replace(is.na(.), 0) %>%
+  mutate(proportion_excluded = excluded / (excluded + not_excluded)) %>%
+  filter(proportion_excluded > .75)
+
+# Three labs have higher than 75% exclusion. Closer inspection to see what happened
+# Ignore UIWCARL since n = 3
+
+high_ex_labs <- clean_data %>%
+  filter(lab_id == "biccbabylab" | lab_id == "mecdmpihcbs",
+         exclusion == "excluded") %>%
+  group_by(lab_id, ex_habcrt) %>%
+  summarize(n = n())
+
+# extremely high exclusion rates because hab criteria never set
+
+
+```
+
 
 ## Basic Sanity checks
 
