@@ -20,7 +20,7 @@ In this document, we conduct and document the pre-registered analyses and explor
 ```{r load packages and functions required for analyses, message=FALSE}
 # packages
 library(tidyverse) 
-library(brms)
+#library(brms)
 library(binom)
 library(ICCbin)
 library(meta)
@@ -36,7 +36,7 @@ library(irr)
 # plan(multiprocess, workers = 4)
 
 # custom functions 
-source("StatTools.R") 
+#source("StatTools.R") 
 source("geom_flat_violin.R")
 
 theme_set(theme_bw(base_size = 10))
@@ -595,7 +595,7 @@ for (j in 1:num)
 {
   for (k in 1:14)
   {
-    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]) & is.na(data[j,4*k]))
+    if (is.na(data[j,4*k-1]) & is.na(data[j,4*k-2]))
     {
      clean_data$num_see[j] = k-1
      break
@@ -704,9 +704,10 @@ exclusion_by_lab <- clean_data %>%
   pivot_wider(names_from = exclusion,
               values_from = n) %>%
   replace(is.na(.), 0) %>%
-  mutate(proportion_excluded = excluded / (excluded + not_excluded)) %>%
-  filter(proportion_excluded > .75)
+  mutate(proportion_excluded = excluded / (excluded + not_excluded)) 
 
+asu <- filter(clean_data, lab_id == "emlasu") %>%
+  filter(ex_habcrt == 1)
 # Three labs have higher than 75% exclusion. Closer inspection to see what happened
 # Ignore UIWCARL since n = 3
 
@@ -2242,6 +2243,11 @@ summary(reduced_model)
 
 ### LANGUAGE MODEL
 
+NOTE FOR JULIEN AND NICO:
+
+- no intercept in model? i.e. ~ 1 + ....
+- you included interaction of age and condition in this model, but Yiyi did not. Should we keep consistent?
+
 ```{r language_model_glmmTMB message=FALSE}
 # Define and summarize model
 language_model <- glmmTMB(chose_helper ~ z_age_days * condition + 
@@ -2296,6 +2302,9 @@ plot(ggpredict(full_model_lme4, c("z_age_days[all]", "condition")))
 ```
 
 ### REDUCED MODEL - LME4
+
+NOTE FOR NICO AND JULIEN: 
+- Why does the reduced model still have condition*age as a random effect? Is it typo or intentional?
 
 ```{r reduced_model_lme4 message=FALSE}
 # Define and summarize model - note that we can keep correlations between random effects here with lme4
