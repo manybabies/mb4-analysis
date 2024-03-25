@@ -1,0 +1,431 @@
+---
+title: "MB4 Main Analyses: Data Import and Cleaning"
+author: "Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, Alvin W.M. Tan, & Francis Yuen" (needs to update)
+date: "2024-03-18"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+This document contains the data import and cleaning for MB4.
+
+```{r options, message=F}
+knitr::opts_chunk$set(cache = TRUE, message = F)
+```
+
+```{r packages}
+library(zoo)
+library(here)
+library(knitr)
+library(tidyverse) 
+library(assertthat)
+library(irr)
+```
+
+# Load data
+```{r load_data}
+clean_data <- read_csv(here("main_data", "clean_data.csv")) # This needs to be downloaded from OSF
+
+clean_data <- as.data.frame(clean_data) 
+```
+
+```{r make_long_data}
+data_long <- clean_data |>
+  # note that pivot_longer changes subj_id order relative to clean_data
+  pivot_longer(starts_with("trial"), 
+               names_to = "variable", 
+               values_to = "value", 
+               values_transform = as.character) |>
+  separate_wider_regex(variable, c(trial = "trial[:digit:]*", "_", 
+                                   variable = "[a-z_]*")) |>
+  mutate(trial = as.numeric(str_replace(trial, "trial", ""))) |>
+  pivot_wider(names_from = "variable", values_from = "value") |>
+  mutate(lookingtime_freezeframe = as.numeric(lookingtime_freezeframe), 
+         lookingtime_videoevent = as.numeric(lookingtime_videoevent),
+         numrepeats = as.numeric(numrepeats)) |> 
+  dplyr::select(-"...1")
+```
+
+# Check reliability
+
+In this section, we check the coding reliability of looking time.
+
+```{r check_reliability}
+library(data.table)
+clean_reliability_looking_data <- read_csv(here("main_data", "clean_reliability_data.csv"))
+# This needs to be downloaded from OSF
+
+reliability_long <- clean_reliability_looking_data |> 
+  pivot_longer(starts_with("trial"),
+               names_to = "variable",
+               values_to = "value") |> 
+  separate_wider_regex(variable, c(trial = "trial[:digit:]*", "_", 
+                                   variable = "[a-z_]*")) |>
+  mutate(trial = as.numeric(str_replace(trial, "trial", ""))) |>
+  pivot_wider(names_from = "variable", values_from = "value") |>
+  mutate(lookingtime_freezeframe = as.numeric(lookingtime_freezeframe))
+
+reliability_merged <- data_long |> 
+  dplyr::select(c(lab_id, subj_id, subj_num, trial, lookingtime_freezeframe1 = lookingtime_freezeframe)) |> 
+  left_join(reliability_long, by = c("lab_id", "subj_id", "subj_num", "trial")) |> 
+  rename(lookingtime_freezeframe2 = lookingtime_freezeframe) |>
+  filter(!is.na(lookingtime_freezeframe1), !is.na(lookingtime_freezeframe2))
+
+icc_result <- icc(reliability_merged |> dplyr::select(starts_with("lookingtime_freezeframe")),
+                  model = "oneway",
+                  type = "agreement",
+                  unit = "single")
+
+print(icc_result)
+```
+
+# Looking time calculations for later analyses
+
+```{r looking_time}
+data_looking <- data_long |> 
+  mutate(first_looking = ifelse((trial %% 2) == 1, lookingtime_freezeframe, NA),
+         second_looking = ifelse((trial %% 2) == 0, lookingtime_freezeframe, NA)) |> 
+  group_by(lab_id, subj_id, push_up_order) |> 
+  summarise(total_looking = mean(lookingtime_freezeframe, na.rm = TRUE),
+            first_looking = mean(first_looking, na.rm = TRUE),
+            second_looking = mean(second_looking, na.rm = TRUE)) |> 
+  mutate(up_looking = ifelse(push_up_order == "first", first_looking, second_looking),
+         down_looking = ifelse(push_up_order == "first", second_looking, first_looking))
+```
+
+
+# Data inspection
+
+In this section, we calculate exclusion rates for the various exclusion reasons.
+
+## Experimenter error 
+
+We check experimenter error based on looking time data directly.
+
+```{r experimenter_error}
+experimenter_error <- data_long |> 
+  filter(sawcriticalevent == "N", numrepeats != 2) |> 
+  dplyr::select(lab_id, subj_id) |> 
+  distinct() |> 
+  mutate(experimenter_error = 1)
+
+print(nrow(experimenter_error))
+```
+
+## Missing critical period
+
+First, we calculate the number of participants excluded because labs report they missed at least one critical period for 3 consecutive times.
+
+```{r missing_critical}
+missed_critical <- data_long |> 
+  filter(sawcriticalevent == "N") |> 
+  dplyr::select(lab_id, subj_id, missed_critical_trial = trial) |> 
+  group_by(lab_id, subj_id) |> 
+  slice(1) |> 
+  mutate(missed_critical = 1)
+
+print(nrow(missed_critical))
+```
+
+## Failure to set habituation criteria 
+
+Next, we calculate *theoretically* whether an infant set a habituation criteria. Note that we need to check this due to a PyHab error where habituation criteria is still set at trial 3 even if looking time during trials 1-3 did not exceed the threshold of 12s 
+```{r failed_criterion}
+habituation_criteria <- data_long |> 
+  filter(trial <= 6) |> # isolates the first 6 trials
+  group_by(lab_id, subj_id) |> 
+  mutate(cumulative_looking = rollsum(lookingtime_freezeframe, 3, fill = NA, align = "right")) |> 
+  filter(cumulative_looking >= 12) |> # habituation criterion
+  slice(1) |> 
+  dplyr::select(lab_id, subj_id, criterion_trial = trial, criterion = cumulative_looking) |> 
+  mutate(failed_habituation_criterion = 0)
+
+print(nrow(habituation_criteria))
+```
+
+## Habituation vs did not habituate
+
+Next, we calculate whether or not an infant habituated, and on which trial they *should have* habituated. Note that we need to calculate this from the reported looking time.
+
+```{r reached_habituation}
+reached_habituation <- data_long |> 
+  left_join(habituation_criteria, by = c("lab_id", "subj_id")) |> 
+  filter(trial > criterion_trial) |> 
+  group_by(lab_id, subj_id) |> 
+  mutate(cumulative_looking = rollsum(lookingtime_freezeframe, 3, fill = NA, align = "right")) |> 
+  filter(cumulative_looking < (criterion / 2)) |>  # reach habituation when <1/2 of criterion
+  slice(1) |> 
+  dplyr::select(lab_id, subj_id, habituation_trial = trial, habituation_looking = cumulative_looking) |> 
+  mutate(did_not_habituate = 0)
+```
+
+## Pyhab error checking
+
+There was an error where PyHab was prematurely (and therefore incorrectly) setting the habituation criterion at Trial 3 even when the sum of the first three trials did not exceed 12s. In these instances, the habituation criteria set by PyHab would be *lower* than the theoretical correct criterion. Here we compare how many trials the infants should have seen, num_hab, against how many trials they actually saw, num_see.
+
+```{r pyhab_error}
+trials_seen <- data_long |> 
+  filter(!is.na(lookingtime_videoevent) | !is.na(lookingtime_freezeframe)) |> 
+  group_by(lab_id, subj_id) |> 
+  arrange(desc(trial)) |> 
+  slice(1) |> 
+  dplyr::select(lab_id, subj_id, trials_seen = trial)
+```
+
+
+```{r participant_summaries}
+# exclusion_types <- c("DevDisorder", "Preterm", "FailToMakeChoice",
+#                      "OutsideInterference", "ExperimenterError", 
+#                      "EquipmentError", "FussOut")
+
+participant_summaries <- data_long |> 
+  dplyr::select(lab_id, subj_id, meet_eligibility, age_days, helper_hinderer_choice, starts_with("exclusion_type")) |> 
+  distinct() |> 
+  left_join(experimenter_error, by = c("lab_id", "subj_id")) |> 
+  left_join(missed_critical, by = c("lab_id", "subj_id")) |> 
+  left_join(habituation_criteria, by = c("lab_id", "subj_id")) |> 
+  left_join(reached_habituation, by = c("lab_id", "subj_id")) |> 
+  left_join(trials_seen, by = c("lab_id", "subj_id")) |> 
+  mutate(across(c(experimenter_error, missed_critical), \(c) replace_na(c, 0)),
+         across(c(failed_habituation_criterion, did_not_habituate), \(c) replace_na(c, 1)),
+         # if missed critical trial, should stop immediately
+         # 6 trials seen for children who did not set habituation criterion
+         # 14 trials seen for children who did not reach habituation
+         # otherwise, experiment should end once habituated
+         correct_trials_seen = ifelse(missed_critical, missed_critical_trial,
+                                      ifelse(failed_habituation_criterion, 6, 
+                                             ifelse(did_not_habituate, 14, habituation_trial))),
+         presentation_error = as.numeric(correct_trials_seen != trials_seen)) |> 
+  # reshape and rename for exclusion reporting
+  mutate(ex_dev_disorder = if_any(starts_with("exclusion_type"), \(c) (c %in% "DevDisorder")),
+         ex_preterm = if_any(starts_with("exclusion_type"), \(c) (c %in% "Preterm")),
+         ex_fail_to_make_choice = if_any(starts_with("exclusion_type"), \(c) (c %in% "FailToMakeChoice"))| 
+           is.na(helper_hinderer_choice),
+         ex_outside_interference = if_any(starts_with("exclusion_type"), \(c) (c %in% "OutsideInterference")),
+         ex_fuss_out = if_any(starts_with("exclusion_type"), \(c) (c %in% "FussOut")),
+         ex_experimenter_error = if_any(starts_with("exclusion_type"), \(c) (c %in% "ExperimenterError")) | 
+           experimenter_error,
+         ex_equipment_error = if_any(starts_with("exclusion_type"), \(c) (c %in% "EquipmentError")) | 
+           presentation_error,
+         ex_fail_to_view_criticial = as.logical(missed_critical),
+         ex_fail_to_set_hab = as.logical(failed_habituation_criterion),
+         is_excluded = if_any(starts_with("ex_")))
+```
+
+## Checking exclusion by lab id
+
+Not to interpret, but to check for any systematic issues or errors in code that is overexcluding infants from labs
+
+```{r lab_exclusions}
+exclusion_by_lab <- participant_summaries |> 
+  group_by(lab_id) |> 
+  summarise(proportion_excluded = sum(is_excluded, na.rm = TRUE) / n())
+
+# Three labs have higher than 75% exclusion. Closer inspection to see what happened
+# Ignore UIWCARL since n = 3
+high_ex_labs <- participant_summaries |> 
+  filter(lab_id %in% c("biccbabylab", "mecdmpihcbs"),
+         is_excluded) |> 
+  count(lab_id, ex_fail_to_set_hab)
+
+```
+
+## Basic sanity checks
+
+We perform some checks for whether there are user-level entry errors in the data.
+
+```{r entry_errors, message = FALSE}
+###### checking for lab_id integrity ######
+lab_list <- read_csv(here("main_data", "contributing_lab_list.csv")) 
+
+lab_counts <- participant_summaries |> 
+  group_by(lab_id) |> 
+  summarise(contributed_n = n())
+
+assert_that(nrow(lab_list) == nrow(lab_counts))
+
+
+###### checking for potential data entry errors ######
+## checking for duplicates
+look_sub <- data_long |> 
+  dplyr::select(lab_id, lookingtime_videoevent, lookingtime_freezeframe) |> 
+  filter(!is.na(lookingtime_freezeframe)) 
+
+# to inspect duplicated rows; 
+# seem to be largely caused by labs that have lower precision
+# look_sub[duplicated(look_sub),] 
+
+
+###### checking cb order matches with entry ######
+condition_orders <- read_csv(here("main_data", "cb_orders.csv"))
+
+condition_check <- data_long |> 
+  dplyr::select(lab_id, subj_id, cb_order, condition, push_up_identity, push_up_order, push_up_side) |> 
+  distinct() |> 
+  left_join(condition_orders, by = "cb_order") |> 
+  mutate(condition_match = correct_condition == condition,
+         push_up_identity_match = correct_push_up_identity == push_up_identity,
+         push_up_order_match = correct_push_up_order == push_up_order,
+         push_up_side_match = correct_push_up_side == push_up_side)
+
+condition_check_summary <- condition_check |> 
+  group_by(condition_match, push_up_identity_match, push_up_order_match, push_up_side_match) |> 
+  summarise(n = n()) # 1 mismatch, 2 where condition info is NA
+
+condition_check_isolated <- condition_check |> 
+  filter(!if_all(ends_with("_match")) |
+           if_any(ends_with("_match"), is.na)) |> 
+  dplyr::select(lab_id, subj_id) |> 
+  mutate(ex_wrong_cb_condition = TRUE)
+
+# cb_checks_na <- cb_checks %>%
+#   filter(is.na(condition_match) == T) # 2 excluded infants; condition info NA because of equipment malfunction
+
+
+###### checking if helper/hinderer choice column was correctly entered ###### 
+choice_check <- data_long |> 
+  dplyr::select(lab_id, subj_id, character_choice, push_up_identity, helper_hinderer_choice) |> 
+  distinct() |> 
+  filter(character_choice != "none") |> 
+  mutate(correct_choice = ifelse(character_choice == push_up_identity, "helper", "hinderer"),
+         helper_hinderer_match = correct_choice == helper_hinderer_choice)
+
+choice_check_isolated <- choice_check |> 
+  filter(!helper_hinderer_match | is.na(helper_hinderer_match)) |> 
+  dplyr::select(lab_id, subj_id) |> 
+  mutate(ex_wrong_choice_entry = TRUE)
+```
+
+
+```{r exclusions_from_entry_errors, message = FALSE}
+participant_summaries <- participant_summaries |> 
+  left_join(condition_check_isolated, by = c("lab_id", "subj_id")) |> 
+  left_join(choice_check_isolated, by = c("lab_id", "subj_id")) |> 
+  mutate(across(c(ex_wrong_cb_condition, ex_wrong_choice_entry), \(c) replace_na(c, FALSE)),
+         is_excluded = is_excluded | ex_wrong_cb_condition | ex_wrong_choice_entry)
+```
+
+## Check for eligibility and incorrect age
+
+```{r eligibility, message = FALSE}
+participant_summaries <- participant_summaries |> 
+  mutate(ex_not_eligible = meet_eligibility != "Y",
+         # approximate age range limits: 5m 15d to 10m 15d
+         ex_out_of_age_range = age_days > 330 | age_days < 150,
+         is_excluded = is_excluded | ex_not_eligible | ex_out_of_age_range) 
+# NOTE: as of Nov 19, 2023, there seems to be entry error for the Yonsei lab
+# For now their data is excluded, but will be added later once it is corrected
+```
+
+## Full exclusion table
+```{r exclusions, message = FALSE}
+# NON-EXCLUSIVE exclusion counts
+participant_summaries |> 
+  summarise(across(starts_with("ex_"), \(x) sum(x, na.rm = TRUE))) |> 
+  t()
+```
+
+
+We now prepare the clean data for the analyses to come. 
+
+```{r data_preparation}
+# organize data by choice, condition, and age for primary analysis
+primary_data_long <- data_long |> 
+  left_join(participant_summaries |> 
+              dplyr::select(lab_id, subj_id, criterion_trial, habituation_trial, is_excluded),
+            by = c("lab_id", "subj_id")) |> 
+  left_join(data_looking |> dplyr::select(lab_id, subj_id, total_looking, up_looking, down_looking),
+            by = c("lab_id", "subj_id")) |> 
+  filter(!is_excluded) |> 
+  mutate(chose_helper = ifelse(helper_hinderer_choice == "helper", 1, 0),
+         z_age_days = scale(age_days))
+
+primary_data <- primary_data_long %>%
+  dplyr::select(-trial,-sawcriticalevent,-lookingtime_freezeframe,-lookingtime_videoevent,-numrepeats)%>%
+  distinct()
+```
+
+## summary of exclusions
+```{r number of participants, message = FALSE}
+print(paste0("Total number of participants: ", 
+             nrow(clean_data)))
+print(paste0("Excluded: ", sum(participant_summaries$is_excluded)))
+print(paste0("Non_excluded: ", nrow(primary_data)))
+```
+
+## descriptive information
+We present some basic information, such as sample size and exclusion rate for each lab.
+
+```{r data description, message=FALSE}
+## valid participants
+# sample size for each lab
+
+# Group by lab id and calculate the mean age for each lab
+summary_by_lab_age <- primary_data %>%
+  group_by(lab_id) %>%
+  summarise(mean_age = mean(age_days, na.rm = TRUE),
+            valid_sample_size = n())
+
+
+# Group by lab id and calculate the sample size for each lab
+summary_by_lab_sample <- clean_data %>%
+  group_by(lab_id) %>%
+  summarise(sample_size = n())
+
+
+summary_by_lab <- merge(summary_by_lab_sample, summary_by_lab_age, by = "lab_id", all.x = TRUE)
+
+summary_by_lab$exclusion_rate <- (summary_by_lab$sample_size-summary_by_lab$valid_sample_size)/summary_by_lab$sample_size 
+
+
+# Print or export the result
+print(summary_by_lab)
+write.csv(summary_by_lab, "summary_by_lab_all.csv", row.names = FALSE)
+
+
+exclusion <- summary_by_lab[, c("lab_id", "exclusion_rate")]
+
+primary_data <- merge(primary_data, exclusion, by = "lab_id", all.x = TRUE)
+
+```
+
+```{r screen and distance, message=FALSE}
+# screen size (inch to cm)
+screen_m <- mean(as.numeric(primary_data$screen_size_inches), na.rm = TRUE)*2.54
+screen_sd <- sd(as.numeric(primary_data$screen_size_inches), na.rm = TRUE)*2.54
+screen_min <- min(as.numeric(primary_data$screen_size_inches), na.rm = TRUE)*2.54
+screen_max <- max(as.numeric(primary_data$screen_size_inches), na.rm = TRUE)*2.54
+
+print(screen_m)
+print(screen_sd)
+print(screen_min)
+print(screen_max)
+
+# distance (cm)
+distance_m <- mean(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_sd <- sd(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_min <- min(primary_data$infant_distance_cm, na.rm = TRUE)
+distance_max <- max(primary_data$infant_distance_cm, na.rm = TRUE)
+
+print(distance_m)
+print(distance_sd)
+print(distance_min)
+print(distance_max)
+
+```
+
+
+```{r add exclusion rate due to failure to make a choice for each lab, message=FALSE}
+lab_choice_exclusion <- participant_summaries %>%
+  group_by(lab_id) %>%
+  summarise(choice_exclusion_rate = mean(ex_fail_to_make_choice))%>%
+  dplyr::select(lab_id, choice_exclusion_rate)
+
+primary_data <- merge(primary_data,lab_choice_exclusion, by = "lab_id", all.x = TRUE)
+```
+
+# save data for analysis
+```{r save data}
+saveRDS(participant_summaries, here("intermediates", "participant_summaries.rds"))
+saveRDS(primary_data, here("intermediates", "primary_data.rds"))
+```
