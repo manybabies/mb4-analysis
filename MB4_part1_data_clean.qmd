@@ -42,8 +42,17 @@ data_long <- clean_data |>
   pivot_wider(names_from = "variable", values_from = "value") |>
   mutate(lookingtime_freezeframe = as.numeric(lookingtime_freezeframe), 
          lookingtime_videoevent = as.numeric(lookingtime_videoevent),
-         numrepeats = as.numeric(numrepeats)) |> 
-  dplyr::select(-"...1")
+         numrepeats = as.numeric(numrepeats)) 
+#|> 
+ # dplyr::select(-"...1")
+```
+
+# looking time coding method
+```{r looking time coding method}
+sum(clean_data$method=="single screen")/nrow(clean_data)
+sum(clean_data$method=="eye-tracking")/nrow(clean_data)
+
+
 ```
 
 # Check reliability
@@ -309,12 +318,15 @@ participant_summaries <- participant_summaries |>
 
 ```{r eligibility, message = FALSE}
 participant_summaries <- participant_summaries |> 
-  mutate(ex_not_eligible = meet_eligibility != "Y",
-         # approximate age range limits: 5m 15d to 10m 15d
-         ex_out_of_age_range = age_days > 330 | age_days < 150,
-         is_excluded = is_excluded | ex_not_eligible | ex_out_of_age_range) 
+  mutate(#ex_not_eligible = meet_eligibility != "Y",
+         ex_out_of_age_range = age_days > 319 | age_days < 167,
+         ex_not_eligible = ex_out_of_age_range|ex_dev_disorder|ex_preterm,
+         is_excluded = is_excluded | ex_not_eligible | ex_out_of_age_range,
+         ex_wrong_procedure = ex_experimenter_error|ex_equipment_error) 
 # NOTE: as of Nov 19, 2023, there seems to be entry error for the Yonsei lab
 # For now their data is excluded, but will be added later once it is corrected
+
+
 ```
 
 ## Full exclusion table
@@ -351,7 +363,33 @@ print(paste0("Total number of participants: ",
              nrow(clean_data)))
 print(paste0("Excluded: ", sum(participant_summaries$is_excluded)))
 print(paste0("Non_excluded: ", nrow(primary_data)))
+
+num_excluded_eligible <- sum(participant_summaries$is_excluded)-sum(participant_summaries$ex_not_eligible==TRUE, na.rm = TRUE)
+total <- nrow(clean_data)-sum(participant_summaries$ex_not_eligible==TRUE, na.rm = TRUE)
+
+print(paste0("Exclusion rate (excluding ineligible infants): ",num_excluded_eligible/total ))
+
+num_wrong_procedure <- sum(participant_summaries$is_excluded)-sum(participant_summaries$ex_wrong_procedure==TRUE, na.rm = TRUE)-sum(participant_summaries$ex_not_eligible==TRUE, na.rm = TRUE)
+total <- nrow(clean_data)-sum(participant_summaries$ex_wrong_procedure==TRUE, na.rm = TRUE)-sum(participant_summaries$ex_not_eligible==TRUE, na.rm = TRUE)
+
+print(paste0("Exclusion rate (excluding wrong procedure and ineligible infants): ",num_wrong_procedure/total ))
+
 ```
+# mean age and gender for valid participants
+```{r age and gender}
+mean(primary_data$age_days)
+sd(primary_data$age_days)
+min(primary_data$age_days)
+max(primary_data$age_days)
+
+gender_frequency <- table(primary_data$participant_gender)
+print(gender_frequency)
+
+sum(primary_data$participant_gender=="female")/nrow(primary_data)
+
+
+```
+
 
 ## descriptive information
 We present some basic information, such as sample size and exclusion rate for each lab.
@@ -368,24 +406,57 @@ summary_by_lab_age <- primary_data %>%
 
 
 # Group by lab id and calculate the sample size for each lab
+summary_by_lab_ineligible <- participant_summaries %>%
+  group_by(lab_id) %>%
+  summarise(ineligible_sample_size = sum(ex_not_eligible, na.rm = TRUE))
+
+# Group by lab id and calculate the ineligible infants for each lab
 summary_by_lab_sample <- clean_data %>%
   group_by(lab_id) %>%
   summarise(sample_size = n())
 
-
-summary_by_lab <- merge(summary_by_lab_sample, summary_by_lab_age, by = "lab_id", all.x = TRUE)
+summary_by_lab_1 <- merge(summary_by_lab_sample, summary_by_lab_age, by = "lab_id", all.x = TRUE)
+summary_by_lab <- merge(summary_by_lab_1, summary_by_lab_ineligible, by = "lab_id", all.x = TRUE)
 
 summary_by_lab$exclusion_rate <- (summary_by_lab$sample_size-summary_by_lab$valid_sample_size)/summary_by_lab$sample_size 
 
+summary_by_lab$exclusion_eligible <- (summary_by_lab$sample_size-summary_by_lab$valid_sample_size-summary_by_lab$ineligible_sample_size)/(summary_by_lab$sample_size -summary_by_lab$ineligible_sample_size)
+
+summary_by_lab <- left_join(summary_by_lab, lab_list %>% select(lab_id, university, region), by = "lab_id")
+
+summary_by_lab$valid_sample_size <- ifelse(is.na(summary_by_lab$valid_sample_size),0,summary_by_lab$valid_sample_size)
+
+summary_by_lab$exclusion_rate <- ifelse(is.na(summary_by_lab$exclusion_rate),1,summary_by_lab$exclusion_rate)
+
+summary_by_lab$exclusion_eligible <- ifelse(is.na(summary_by_lab$exclusion_eligible),1,summary_by_lab$exclusion_eligible)
+
+summary_by_lab$exclusion_rate <- round(summary_by_lab$exclusion_rate,2)
+summary_by_lab$mean_age <- round(summary_by_lab$mean_age/30,2)
+summary_by_lab$exclusion_eligible <- round(summary_by_lab$exclusion_eligible,2)
 
 # Print or export the result
 print(summary_by_lab)
 write.csv(summary_by_lab, "summary_by_lab_all.csv", row.names = FALSE)
 
 
-exclusion <- summary_by_lab[, c("lab_id", "exclusion_rate")]
+exclusion <- summary_by_lab[, c("lab_id", "exclusion_eligible")]
 
 primary_data <- merge(primary_data, exclusion, by = "lab_id", all.x = TRUE)
+
+mean(summary_by_lab$valid_sample_size)
+sd(summary_by_lab$valid_sample_size)
+min(summary_by_lab$valid_sample_size)
+max(summary_by_lab$valid_sample_size)
+
+```
+# sample size for each region
+```{r sample size for each region}
+region_sample_sizes <- summary_by_lab %>%
+  group_by(region) %>%
+  summarise(region_sample_size = sum(valid_sample_size))
+
+print(region_sample_sizes)
+write.csv(region_sample_sizes,"region_sample_sizes.csv")
 
 ```
 
@@ -415,6 +486,7 @@ print(distance_max)
 ```
 
 
+
 ```{r add exclusion rate due to failure to make a choice for each lab, message=FALSE}
 lab_choice_exclusion <- participant_summaries %>%
   group_by(lab_id) %>%
@@ -423,6 +495,8 @@ lab_choice_exclusion <- participant_summaries %>%
 
 primary_data <- merge(primary_data,lab_choice_exclusion, by = "lab_id", all.x = TRUE)
 ```
+
+
 
 # save data for analysis
 ```{r save data}
