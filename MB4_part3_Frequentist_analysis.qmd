@@ -1,0 +1,1060 @@
+---
+title: "MB4 Main Analyses: Frequentist Analysis"
+author: "Julien Mayor and Nicolas Alessandroni, based on the Bayesian analysis of Kelsey Lucca, Arthur Capelier-Mourguy, Mike Frank, Yiyi Wang, Alvin W.M. Tan, & Francis Yuen" 
+date: "2024-04-24"
+output: word_document
+---
+
+
+```{r options, message=F}
+knitr::opts_chunk$set(cache = TRUE, message = F)
+```
+
+```{r packages}
+### descriptives
+library(irr)
+library(ICCbin)
+
+### modeling
+library(glmmTMB)
+library(lme4)
+library(lmerTest)
+library(brms)
+library(binom)
+library(MCMCpack)
+library(bridgesampling)
+library(coda)
+library(ggeffects)
+library(meta)
+
+### utils
+library(zoo)
+library(here)
+library(knitr)
+library(future)
+# plan(multiprocess, workers = 4)
+library(tidyverse) 
+library(assertthat)
+
+# custom functions 
+source("StatTools.R") 
+source("geom_flat_violin.R")
+
+```
+
+```{r setup}
+source("geom_flat_violin.R")
+
+theme_set(theme_bw(base_size = 10))
+set.seed(705)
+```
+
+```{r}
+participant_summaries <- readRDS(here("intermediates", "participant_summaries.rds"))
+primary_data <- readRDS(here("intermediates", "primary_data.rds"))
+```
+
+
+
+
+# Data analysis
+
+We first produce some diagnostic plots. We then define the full Frequentist model against which null models will be compared. Finally we address the two research questions: do infants in the social condition choose preferably the helper character, and does preference for either character change with age.
+
+## Diagnostic plots
+
+We can first check how infants in the two conditions performed in general depending on their age.
+```{r proportion}
+# Calculate mean proportions for each condition
+proportions <- primary_data %>%
+  group_by(condition) %>%
+  summarize(
+    mean_proportion = mean(chose_helper)
+  )
+
+# Print the results
+print(paste0("Proportion of helper choice in the social condition: ", proportions$mean_proportion[proportions$condition == "social"]))
+print(paste0("Proportion of helper choice in the nonsocial condition: ", proportions$mean_proportion[proportions$condition == "nonsocial"]))
+
+```
+
+
+
+```{r age_plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("age_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+We also check how infants in the two conditions performed in general depending on the number of habituation trials.
+
+```{r number of habituation trial plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = habituation_trial,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("number of habituation trials") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("habituation_trial_scatter.pdf", scatter,
+      units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+We also check how infants in the two conditions performed in general depending on looking time during habituation.
+
+```{r total looking time plot, message=FALSE}
+primary_data$num_should <- as.numeric(primary_data$total_looking)
+scatter <- ggplot(primary_data,
+                  aes(x = total_looking,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("looking time") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("looking_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+
+```{r habituation plot, message=FALSE}
+primary_data$habituation <- ifelse(is.na(primary_data$habituation_trial),0,1)
+scatter <- ggplot(primary_data,
+                  aes(x = habituation,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("habituation") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
+    scale_x_continuous(breaks = c(0, 1),
+                     labels = c("Not habituated", "Habituated"))
+ggsave("habituation_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+```{r screen, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = screen_size_inches,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("screen size (inches)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
+ggsave("screen_size_inches_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+We can then check lab variability, by plotting the estimated mean and Credible Intervals per lab for each condition.
+
+```{r lab_plot, message=FALSE}
+by_lab <- primary_data %>%
+  group_by(lab_id, condition) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.bayes(x = chose_helper, 
+                                   n = tested)$lower,
+            ci_upper = binom.bayes(x = chose_helper, 
+                                   n = tested)$upper) %>%
+  mutate(condition = factor(condition, c("nonsocial", "social")))
+
+forest <- ggplot(by_lab,
+                 aes(x = lab_id, colour = condition,
+                     y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  geom_linerange(position = position_dodge(width = .5)) + 
+  geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
+  coord_flip() + xlab("Lab") + ylab("Proportion Choosing Helper/Push-up character") + ylim(0,1) + 
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")
+ggsave("forest.pdf", forest,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(forest)
+```
+
+## Frequentist analysis
+
+### Global Frequentist model
+
+We first need to define the full model that will be used throughout the Frequentist analysis. 
+
+```{r full_model, results=FALSE, message=FALSE}
+full_model <- glmer(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days + 
+                  (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+
+### Choice preference
+
+The first research question was whether or not infants in the social condition would chose the helper character more than infants in the non-social control condition, as evidenced by a greater-than-zero main effect of `condition`. To test this, we first define a null model, without the effect of interest. 
+
+```{r nocondition_model, results=FALSE, message=FALSE}
+
+# Run model
+freq.info_no_condition <- glmer(chose_helper ~ 1 + z_age_days + 
+                  (1 + z_age_days | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+We can now compare both models to evaluate whether condition improves model fit.
+
+```{r full-null effect of condition, message=FALSE}
+
+anova(full_model,freq.info_no_condition)
+
+# full-null not significant -> condition does not improve model fit.
+```
+
+
+### Effect of age
+
+The second research question we had was whether or not choice preference changed with age. To test this, we define a null model that does not have the interactive effect of `z_age_days:condition` and compare it to the full model.
+
+
+```{r no_age, results=FALSE, message=FALSE}
+
+# Run model
+freq.info_no_age <- glmer(chose_helper ~ 1 + condition + z_age_days + 
+                  (1 + condition + z_age_days | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+
+```{r no_age comparison effect, message=FALSE}
+anova(full_model, freq.info_no_age)
+
+# Age doesn't interact with condition to predict choice.
+```
+### Global Frequentist model (habituated infants)
+
+As a follow-up analysis, we refitted the same model including only infants who successfully habituated to the events (n = 454 of babies successfully habituated).
+
+```{r proportion of habituated infants}
+# Calculate mean proportions for each condition
+primary_data_habituated <- subset(primary_data, !is.na(habituation_trial))
+nrow(primary_data_habituated)
+nrow(primary_data_habituated)/nrow(primary_data)
+
+proportions <- primary_data_habituated %>%
+  group_by(condition) %>%
+  summarize(
+    mean_proportion = mean(chose_helper)
+  )
+
+# Print the results
+print(paste0("Proportion of helper choice in the social condition: ", proportions$mean_proportion[proportions$condition == "social"]))
+print(paste0("Proportion of helper choice in the nonsocial condition: ", proportions$mean_proportion[proportions$condition == "nonsocial"]))
+
+```
+
+```{r full_model_habituated, results=FALSE, message=FALSE}
+full_model_habituated <- glmer(chose_helper ~ 1 + condition + z_age_days + condition:z_age_days + 
+                  (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                data = primary_data_habituated, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+
+### Choice preference (habituated)
+
+The first research question was whether or not infants in the social condition would chose the helper character more than infants in the non-social control condition, as evidenced by a greater-than-zero main effect of `condition`. To test this, we first define a null model, without the effect of interest. 
+
+```{r nocondition_model_habituated, results=FALSE, message=FALSE}
+
+# Run model
+freq.info_no_condition_habituated <- glmer(chose_helper ~ 1 + z_age_days + 
+                  (1 + z_age_days | lab_id), 
+                data = primary_data_habituated, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+We can now compare both models to evaluate whether condition improves model fit.
+
+```{r full-null effect of condition _habituated, message=FALSE}
+
+anova(full_model_habituated,freq.info_no_condition_habituated)
+
+# full-null not significant -> condition does not improve model fit.
+```
+
+
+### Effect of age (habituated)
+
+The second research question we had was whether or not choice preference changed with age. To test this, we define a null model that does not have the interactive effect of `z_age_days:condition` and compare it to the full model.
+
+
+```{r no_age_habituated, results=FALSE, message=FALSE}
+
+# Run model
+freq.info_no_age_habituated <- glmer(chose_helper ~ 1 + condition + z_age_days + 
+                  (1 + condition + z_age_days | lab_id), 
+                data = primary_data_habituated, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+
+```{r no_age comparison effect habituated, message=FALSE}
+anova(full_model_habituated, freq.info_no_age_habituated)
+
+# Age doesn't interact with condition to predict choice.
+```
+
+## Lab variety analysis: ICCs
+
+To look at the between-lab variability, we compute the intraclass-correlation for random intercepts of the mixed effects model.
+
+```{r icc, message=FALSE}
+primary_data_filtered <- primary_data[primary_data$lab_id != "corbitlab", ]
+
+icc <- iccbin(cid = lab_id, y = chose_helper, 
+              data = primary_data_filtered,
+             alpha = 0.05)
+print(icc)
+```
+
+
+
+### Choice preference (social condition)
+
+Examine whether infants prefer helper over hinder in the social condition
+
+```{r social_condition_intercept, results=FALSE, message=FALSE}
+# select data
+social_data <- subset(primary_data,condition == "social")
+
+# Run model
+freq.info_single.full <- glmer(chose_helper ~ 1 + z_age_days + 
+                  (1 + z_age_days | lab_id), 
+                data = social_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.info_single.full)
+
+# no effect at a mean age (intercept) nor an effect of age.
+
+```
+
+
+# Exploratory analyses
+
+## pre-registered exploratory analyses - frequentist version
+
+We analyzed other potential moderators that were mentioned in our registered report, including (1) attention to the video events (i.e., as measured by the number of trials to habituation, overall looking time to the still frame events), (2) clear versus ambiguous choice actions (i.e., whether infants touched both characters during the choice phase), and (3) experimenter blindness (i.e., whether the experimenter administering the choice phase knew whether the infant participated in the Social vs. Non-Social condition). 
+
+### total looking time
+
+We analyzed the effect of overall looking time to the still frame events.
+
+```{r total looking full_model, results=FALSE, message=FALSE}
+
+freq.total_looking <- glmer(chose_helper ~ 1 + condition + total_looking + condition:total_looking +
+                  (1 + condition + total_looking + condition:total_looking | lab_id),
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+```{r total looking full_estimates of each parameter, message=FALSE}
+
+freq.total_nolooking <- glmer(chose_helper ~ 1 + condition + 
+                  (1 + condition | lab_id),
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+```
+
+```{r total looking comparison, message=FALSE}
+anova(freq.total_nolooking, freq.total_looking)
+
+# no effect of total looking time
+```
+
+We also separate looking time under helping/upward and hindering/downward scenarios and analyze their potential moderating effects.
+
+```{r separated looking time full model, results=FALSE, message=FALSE}
+
+freq.total_updownlooking <- glmer(chose_helper ~ 1 + condition + up_looking +down_looking + condition:up_looking + condition:down_looking +
+                       (1 + condition + up_looking + down_looking + condition:up_looking + condition:down_looking | lab_id),
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.total_updownlooking)
+
+# no effect of looking time under helping/upward and hindering/downward scenarios 
+
+```
+
+
+### number of habituation trials
+
+```{r habituation trials full_model, results=FALSE, message=FALSE}
+
+freq.hab_trial_num <- glmer(chose_helper ~ 1 + condition + habituation_trial + condition:habituation_trial +
+                       (1 + condition + habituation_trial + condition:habituation_trial | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.hab_trial_num)
+
+# no effect of the number of habituation trials
+
+```
+
+
+### ambiguous choice
+```{r touch both full_model, results=FALSE, message=FALSE}
+
+freq.touch_both <- glmer(chose_helper ~ 1 + condition + touch_both + condition:touch_both +
+                       (1 + condition + touch_both + condition:touch_both | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.touch_both)
+
+# no effect of ambiguous choice
+
+```
+
+### naive experimenter
+
+```{r naive RA full_model, results=FALSE, message=FALSE}
+
+freq.RA_1_naive <- glmer(chose_helper ~ 1 + condition + RA_1_naive + condition:RA_1_naive +
+                       (1 + condition + RA_1_naive + condition:RA_1_naive | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+
+summary(freq.RA_1_naive)
+
+# no effect of naive experimenter 
+```
+
+## non-pre-registered exploratory analyses
+
+We also analyzed other potential moderators that were not mentioned in our registered report, including  (1) experiment-level factors (i.e., the order of helping vs. hindering videos, helper identity (yellow vs. blue), helper side during choice (right vs. left), the visual angle calculated by the distance of infants from screen and screen size, whether the hill paradigm was conducted in the first session during infant visits, whether the experimenter wore a mask or not, the presentation method of stimuli), (2) child-level characteristics (i.e., handedness, color blindness, participant gender, the exposure percentage of  primary language), and (3) lab-level factors (i.e., the exclusion rate of each lab, the rate of exclusion due to failure to make a choice for each lab).
+
+### experimenter level
+```{r push_up_order full_model, results=FALSE, message=FALSE}
+
+freq.push_up_order <- glmer(chose_helper ~ 1 + condition + push_up_order + condition:push_up_order +
+                       (1 + condition + push_up_order + condition:push_up_order | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+
+
+summary(freq.push_up_order)
+
+# no effect
+```
+
+
+```{r push_up_identity full_model, results=FALSE, message=FALSE}
+
+freq.push_up_identity <- glmer(chose_helper ~ 1 + condition + push_up_identity + condition:push_up_identity +
+                       (1 + condition + push_up_identity + condition:push_up_identity | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.push_up_identity)
+
+# no effect
+```
+
+
+```{r push_up_side full_model, results=FALSE, message=FALSE}
+
+freq.push_up_side <- glmer(chose_helper ~ 1 + condition + push_up_side + condition:push_up_side +
+                       (1 + condition + push_up_side + condition:push_up_side | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.push_up_side)
+
+# no effect
+
+```
+
+
+```{r visual_angle full_model, results=FALSE, message=FALSE}
+primary_data$visual_angle <- 2 * atan(primary_data$screen_size_inches*2.54 / (2 * primary_data$infant_distance_cm)) * (180 / pi)
+
+freq.visual_angle <- glmer(chose_helper ~ 1 + condition + visual_angle + condition:visual_angle +
+                       (1 + condition + visual_angle + condition:visual_angle | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+
+summary(freq.visual_angle)
+
+# no effect
+
+```
+
+
+
+```{r second_session full_model, results=FALSE, message=FALSE}
+
+freq.second_session <- glmer(chose_helper ~ 1 + condition + second_session + condition:second_session +
+                       (1 + condition + second_session + condition:second_session | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.second_session)
+
+# no effect
+
+```
+
+
+```{r choice_experimenter_mask full_model, results=FALSE, message=FALSE}
+
+freq.choice_experimenter_mask <- glmer(chose_helper ~ 1 + condition + choice_experimenter_mask + condition:choice_experimenter_mask +
+                       (1 + condition + choice_experimenter_mask + condition:choice_experimenter_mask | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.choice_experimenter_mask)
+
+# no effect
+
+```
+
+
+```{r method full_model, results=FALSE, message=FALSE}
+
+freq.method <- glmer(chose_helper ~ 1 + condition + method + condition:method +
+                       (1 + condition + method + condition:method | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.method)
+
+# no effect
+```
+
+
+### child level
+
+```{r infant_handedness full_model, results=FALSE, message=FALSE}
+
+freq.infant_handedness <- glmer(chose_helper ~ 1 + condition + infant_handedness + condition:infant_handedness +
+                       (1 + condition + infant_handedness + condition:infant_handedness | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+summary(freq.infant_handedness)
+
+# not sure what is happening here - extremely slow to run this model, returns extraordinarily large z values for all estimates (and infinitely small p-values), no correlations between fixed effects....
+```
+
+
+```{r colorblindness_primaryfamily full_model, results=FALSE, message=FALSE}
+
+freq.colorblindness_primaryfamily <- glmer(chose_helper ~ 1 + condition + colorblindness_primaryfamily + condition:colorblindness_primaryfamily +
+                       (1 + condition + colorblindness_primaryfamily + condition:colorblindness_primaryfamily | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+
+
+summary(freq.colorblindness_primaryfamily)
+
+# no effect
+```
+
+
+```{r participant_gender full_model, results=FALSE, message=FALSE}
+
+freq.participant_gender <- glmer(chose_helper ~ 1 + condition + participant_gender + condition:participant_gender +
+                       (1 + condition + participant_gender + condition:participant_gender | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.participant_gender)
+
+# no effect
+```
+
+```{r percent_primarylanguage full_model, results=FALSE, message=FALSE}
+primary_data$percent_primarylanguage <- ifelse(primary_data$percent_primarylanguage<20,NA,primary_data$percent_primarylanguage)
+
+freq.percent_primarylanguage <- glmer(chose_helper ~ 1 + condition + percent_primarylanguage + condition:percent_primarylanguage +
+                       (1 + condition + percent_primarylanguage + condition:percent_primarylanguage | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                                 optCtrl=list(maxfun=2e5)))
+summary(freq.percent_primarylanguage)
+
+# here again, enormous z value for condition and its interaction with language....???
+```
+
+
+### lab level
+
+```{r exclusion_rate full_model, results=FALSE, message=FALSE}
+
+freq.exclusion_rate <- glmer(chose_helper ~ 1 + condition + exclusion_eligible + condition:exclusion_eligible +
+                       (1 + condition + exclusion_eligible + condition:exclusion_eligible | lab_id),
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.exclusion_rate)
+# intercept coefficient is statistically different from zero, no effects
+```
+
+
+```{r choice_exclusion_rate full_model, results=FALSE, message=FALSE}
+
+freq.choice_exclusion_rate <- glmer(chose_helper ~ 1 + condition + choice_exclusion_rate + condition:choice_exclusion_rate +
+                       (1 + condition + choice_exclusion_rate + condition:choice_exclusion_rate | lab_id), 
+                        data = primary_data, family = binomial(link = "logit"),
+                        control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5)))
+summary(freq.choice_exclusion_rate)
+# intercept coefficient is statistically different from zero, no effects
+```
+
+
+## Exploratory analsyes separating habituated and nonhabituated infants 
+
+We also analyzed whether infants were habituated or not would influence infants' choices under different conditions. We also exported the exact proportion of choosing the helper for infants who were habituated or not habituated under two conditions.
+
+### Plot (habituated vs. nonhabituated)
+
+```{r habituation_plot}
+scatter <- ggplot(primary_data,
+                  aes(x = habituation,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Habituation or not") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
+  scale_x_continuous(breaks = c(0, 1),
+                     labels = c("unhabituated", "habituated"))
+ggsave("hab_scatter.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+
+# Create the interaction variable
+primary_data$Interaction <- interaction(primary_data$condition, primary_data$habituation)
+
+result <- tapply(primary_data$chose_helper, primary_data$Interaction, FUN = function(x) mean(x))  # You can use any summary function here
+
+print(result)
+```
+
+### Frequentist version of the Bayesian model adding habituation as a moderator
+
+Whether infants were habituated or not was added to the full model.
+
+```{r habituation or not full_model, results=FALSE, message=FALSE}
+
+freq.hab <- glmer(chose_helper ~ 1 + condition + habituation + condition:habituation + 
+                       (1 + condition + habituation + condition:habituation | lab_id), 
+                data = primary_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.hab)
+
+# significant effect of habituation and condition:habituation 
+
+```
+
+
+
+### Choice preference when habituated
+
+We examine whether infants preferred helper more in the social condition than in the non-social condition when they were habituated. 
+
+```{r habituated condition models, results=FALSE, message=FALSE}
+# select data
+hab_data <- subset(primary_data,habituation == 1)
+
+# Run model
+
+freq.hab.full <- glmer(chose_helper ~ 1 + condition + 
+                       (1 + condition | lab_id), 
+                data = hab_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+freq.hab.full.no_condition <- glmer(chose_helper ~ 1 +
+                       (1  | lab_id), 
+                data = hab_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+anova(freq.hab.full, freq.hab.full.no_condition)
+summary(freq.hab.full)
+
+# full-null comparison not significant -> condition does not improve the model fit
+# significant effect of condition
+```
+
+### Choice preference when not habituated
+
+We examine whether infants prefer helper more in the social condition than in the non-social condition when they were not habituated 
+
+```{r nonhabituated condition models, results=FALSE, message=FALSE}
+# select data
+nonhab_data <- subset(primary_data,habituation == 0)
+
+# Run model
+freq.nonhab.full <- glmer(chose_helper ~ 1 + condition + 
+                       (1 + condition | lab_id), 
+                data = nonhab_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+summary(freq.nonhab.full)
+# no effect
+
+```
+
+
+### Choice preference in the social condition
+
+We examine whether being habituated or not has an effect on infants’ choices in the social condition. 
+
+```{r social condition models, results=FALSE, message=FALSE}
+# select data
+social_data <- subset(primary_data,condition == "social")
+
+# Run model
+freq.noninfo.social.full <- glmer(chose_helper ~ 1 + habituation +
+                       (1 + habituation | lab_id), 
+                data = social_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+freq.noninfo.social.nohab <- glmer(chose_helper ~ 1 +
+                       (1 | lab_id), 
+                data = social_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+anova(freq.noninfo.social.nohab,freq.noninfo.social.full)
+summary(freq.noninfo.social.full)
+# full-null comparison not significant
+
+```
+
+
+
+### Choice preference in the nonsocial condition
+
+We examine whether being habituated or not has an effect on infants’ choices in the nonsocial condition. 
+
+```{r nonsocial condition models, results=FALSE, message=FALSE}
+# select data
+nonsocial_data <- subset(primary_data,condition == "nonsocial")
+
+
+# Run model
+freq.noninfo.nonsocial.full <- glmer(chose_helper ~ 1 + habituation +
+                       (1 + habituation | lab_id), 
+                data = nonsocial_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+freq.noninfo.nonsocial.nohab <- glmer(chose_helper ~ 1 +
+                       (1 | lab_id), 
+                data = nonsocial_data, family = binomial(link = "logit"),
+                control=glmerControl(optimizer="bobyqa",
+                     optCtrl=list(maxfun=2e5)))
+
+anova(freq.noninfo.nonsocial.nohab,freq.noninfo.nonsocial.full)
+
+# full-null comparison not significant
+```
+
+
+## exploratory analyses of looking time
+
+### total looking time
+
+To test for the possibility of attentional differences across the Social and Non-Social conditions, we conducted exploratory analyses on infants’ gaze behavior during habituation, and in particular how long they look at the still image of the final frame presented after each video.
+
+We first analyzed the effect of condition.
+
+```{r full_exploratory_model total looking and condition, results=FALSE, message=FALSE}
+
+freq.looking.full <- lmer(total_looking ~ 1 + condition + z_age_days + condition:z_age_days + 
+                              (1 + condition + z_age_days + condition:z_age_days | lab_id),  
+                data = primary_data)
+
+freq.looking.nocond <- lmer(total_looking ~ 1  + z_age_days  + 
+                              (1 + z_age_days  | lab_id),  
+                data = primary_data)
+
+anova(freq.looking.nocond, freq.looking.full)
+summary(freq.looking.full)
+
+# adding condition and condition:z_age_days significantly improves model fit
+# effect of condition and the condition:z_age_days interaction
+
+```
+
+
+We then analyzed the effect of age by removing the interaction between age and condition from the full model.
+
+```{r full.exploratory_model total looking and age, results=FALSE, message=FALSE}
+
+freq.looking.no_age <- lmer(total_looking ~ 1 + z_age_days + condition  + (1 + z_age_days + condition|lab_id), 
+                        data = primary_data)
+
+anova(freq.looking.no_age, freq.looking.full)
+# full-null comparison not significant 
+```
+
+Next, we unpacked the interaction in freq.looking.full by examining the effect of condition in young and old age groups.
+
+```{r full.exploratory_model total looking and age (young), results=FALSE, message=FALSE}
+young_data <- subset(primary_data,z_age_days < -1)
+freq.looking.full.young <- lmer(total_looking ~ 1 + condition + 
+                (1 + condition | lab_id),  
+                data = young_data)
+
+freq.looking.full.no_condition.young <- lmer(total_looking ~ 1 + 
+                (1 | lab_id),  
+                data = young_data)
+anova(freq.looking.full.young, freq.looking.full.no_condition.young)
+summary(freq.looking.full.young)
+
+# effect of condition in the young age group
+```
+
+```{r looking time parameters (young), results=FALSE, message=FALSE}
+
+# Calculate mean and standard deviation for each condition
+mean_socialcondition <- mean(young_data$total_looking[young_data$condition == "social"])
+sd_socialcondition <- sd(young_data$total_looking[young_data$condition == "social"])
+
+mean_nonsocialcondition <- mean(young_data$total_looking[young_data$condition == "nonsocial"])
+sd_nonsocialcondition <- sd(young_data$total_looking[young_data$condition == "nonsocial"])
+
+# Print results
+cat("Mean looking time for Social Condition:", mean_socialcondition, "\n")
+cat("Standard deviation of looking time for Social Condition:", sd_socialcondition, "\n")
+
+cat("Mean looking time for Nonsocial Condition:", mean_nonsocialcondition, "\n")
+cat("Standard deviation of looking time for Nonsocial Condition:", sd_nonsocialcondition, "\n")
+
+
+```
+
+```{r full.exploratory_model total looking and age (old), results=FALSE, message=FALSE}
+old_data <- subset(primary_data,z_age_days > 1)
+freq.looking.full.old <- lmer(total_looking ~ 1 + condition + 
+                (1 + condition | lab_id),  
+                data = old_data)
+
+freq.looking.full.no_condition.old <- lmer(total_looking ~ 1 + 
+                (1 | lab_id),  
+                data = old_data)
+anova(freq.looking.full.old, freq.looking.full.no_condition.old)
+summary(freq.looking.full.old)
+
+# no effect of condition in the old age group
+```
+
+We also examined the effect of age in the social and non-social conditions
+
+```{r full.exploratory_model total looking and age (social), results=FALSE, message=FALSE}
+freq.looking.full.social <- lmer(total_looking ~ 1 + z_age_days + (1 + z_age_days|lab_id),  
+                data = social_data)
+
+freq.looking.full.no_age.social <- lmer(total_looking ~ 1 +  (1 |lab_id), 
+                data = social_data)
+anova(freq.looking.full.social, freq.looking.full.no_age.social)
+summary(freq.looking.full.social)
+
+# effect of age in the social condition
+```
+
+```{r full.exploratory_model total looking and age (nonsocial), results=FALSE, message=FALSE}
+freq.looking.full.nonsocial <- lmer(total_looking ~ 1 + z_age_days + (1 + z_age_days|lab_id),  
+                data = nonsocial_data)
+
+freq.looking.full.no_age.nonsocial <- lmer(total_looking ~ 1 +  (1 |lab_id), 
+                data = nonsocial_data)
+anova(freq.looking.full.nonsocial, freq.looking.full.no_age.nonsocial)
+summary(freq.looking.full.nonsocial)
+
+# effect of age in the nonsocial condition
+```
+
+```{r total looking time age_plot, message=FALSE}
+scatter <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = total_looking,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("looking time") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) 
+ggsave("age_scatter_looking.pdf", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+```
+
+
+```{r looking time marginal_plot, results=FALSE, message=FALSE}
+# Compute marginal effects
+marginal_effects <- freq.looking.full %>%
+  ggpredict(terms = c("z_age_days [all]", "condition")) %>%
+  rename(z_age_days = x,
+         total_looking = predicted,
+         condition = group)
+
+primary_data$condition = factor(primary_data$condition, c("nonsocial","social"))
+marginal_effects$condition = factor(marginal_effects$condition, c("nonsocial","social"))
+
+# Plot data and marginal effects
+scatter.freq <- ggplot(primary_data,
+                  aes(x = z_age_days,
+                      y = total_looking,
+                      colour = condition,
+                      fill = condition)) +
+  geom_line(data = marginal_effects) +
+  geom_ribbon(alpha = .5, colour = NA,
+              data = marginal_effects,
+              aes(ymin = conf.low,
+                  ymax = conf.high)) +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Age (scaled centred)") + ylab("Looking time") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial","social"),
+                      labels = c("non-social","social")) +
+  scale_fill_brewer(palette = "Dark2", name = "Condition",
+                   breaks = c("nonsocial","social"),
+                      labels = c("non-social","social")) 
+ggsave("age_scatter_freq_looking.pdf", scatter.freq,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter.freq)
+
+```
+
+### looking time in helping/upward condition and in hindering/downward condition
+
+Additional analyses separated infant looking time in helping/upward condition and in hindering/downward condition. Infants looked longer at the still frame in the helping social condition than in the upward non-social condition and looked longer at the still frame in the hindering social condition than in the downward non-social condition. 
+
+```{r up_looking_condition full_model, results=FALSE, message=FALSE}
+
+freq.up_looking_condition_lme4 <- lmer(up_looking ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days | lab_id), 
+                        data = primary_data)
+summary(freq.up_looking_condition_lme4)
+
+# main effect of condition
+```
+
+
+```{r down_looking_condition full_model, results=FALSE, message=FALSE}
+
+freq.down_looking_condition_lme4 <- lmer(down_looking ~ 1 + condition + z_age_days + condition:z_age_days +
+                       (1 + condition + z_age_days + condition:z_age_days || lab_id), 
+                        data = primary_data)
+summary(freq.down_looking_condition_lme4)
+# effect of condition and interaction between condition and age - but needed to remove correlation between random effects for convergence
+```
+
+### compare looking time toward helping vs. hindering scenario
+
+We also compared infants' looking time in helping vs. hindering condition. Infants spent a comparable amount of time looking at the still frame following videos depicting helping/upward movements and videos depicting hindering/downward movements.
+
+```{r up_looking vs. down_looking, message=FALSE}
+library(tidyr)
+short_data <- primary_data[, c("subj_num","up_looking", "down_looking","condition","lab_id")]
+
+# Convert short data to long data
+primary_looking_data <- gather(short_data, key = "identity", value = "time", -subj_num,-lab_id,-condition)
+
+```
+
+```{r up_looking vs. down_looking full_model, results=FALSE, message=FALSE}
+#brm.noninfo.up_down <- brm(time ~ 1 + condition + identity + condition:identity +
+#                       (1 + condition + identity + condition:identity | lab_id), 
+#                        data = primary_looking_data,
+#                        prior = priors.noninformative, iter = 10000, 
+#                        control = list(adapt_delta = .99, max_treedepth = 20),
+#                        chains = 4, future = T, save_all_pars = TRUE)
+
+freq.up_down_lme4 <- lmer(time ~ 1 + condition + identity + condition:identity +
+                       (1 + condition + identity + condition:identity | lab_id), 
+                        data = primary_looking_data)
+summary(freq.up_down_lme4)
+# effect of condition
+```
