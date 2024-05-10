@@ -4,7 +4,7 @@ ManyBabies4 analysis
 # Data storage and organization
 
 - Data from the main study is stored on the project's OSF repository
-- To reproduce analyses, download "clean_data.csv," "cb_orders.csv," and "contributing_lab_list.csv" from OSF and place it in the "main_data" folder under the "final_analysis" folder
+- To reproduce analyses, download "clean_data.csv," "cb_orders.csv," and "contributing_lab_list.csv" from OSF and place it in the "main_data" folder 
 
 # Cleaning and Analysis scripts used in manuscript ('final_analysis' folder)
 
