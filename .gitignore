@@ -41,4 +41,5 @@ nohup.out
 
 # Ignore items in main_data; these should be downloaded separately from OSF
 main_data/*
-
+intermediates/*
+.DS_Store
