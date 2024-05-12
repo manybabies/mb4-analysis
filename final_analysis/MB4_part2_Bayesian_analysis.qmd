@@ -24,6 +24,7 @@ library(bridgesampling)
 library(coda)
 library(ggeffects)
 library(meta)
+library(bayesplot)
 
 ### utils
 library(zoo)
@@ -247,6 +248,22 @@ brm.noninfo.full <- brm(chose_helper ~ 1 + condition + z_age_days + condition:z_
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
+
+We check posterior predictions and dispersion
+```{r model checking}
+pp_check(brm.info.full)
+num_zeros <- \(x){sum(x == 0)/length(x)}
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.info.full, draws = 200), 
+         stat="num_zeros")
+pp_check(brm.noninfo.full)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.full, draws = 200), 
+         stat="num_zeros")
+
+```
+
+
 We can already look at the parameter estimates and their 95% Credible Intervals from this model.
 
 ```{r full_estimates of each parameter, message=FALSE}
@@ -453,6 +470,18 @@ brm.noninfo.habituated.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
 
+Again we check the models for fit:
+```{r model checking subset}
+pp_check(brm.info.habituated.full)
+ppc_stat(y = primary_data_habituated$chose_helper, 
+         yrep = posterior_predict(brm.info.habituated.full, draws = 200), 
+         stat="num_zeros") #function from above.
+pp_check(brm.noninfo.habituated.full)
+ppc_stat(y = primary_data_habituated$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.habituated.full, draws = 200), 
+         stat="num_zeros")
+```
+
 Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
 
 ```{r full_bridge_habituated, message=FALSE}
@@ -643,6 +672,15 @@ brm.noninfo.total_looking <- brm(chose_helper ~ 1 + condition + total_looking + 
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
+Check for fit again
+```{r model checking LT}
+pp_check(brm.noninfo.total_looking)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.total_looking, draws = 200), 
+         stat="num_zeros") #function from above.
+```
+
+
 ```{r total looking full_estimates of each parameter, message=FALSE}
 brm.noninfo.total_looking %>% estimates.brm_fixef(prob = .95) %>%
   kable()
@@ -682,6 +720,14 @@ brm.noninfo.looking <- brm(chose_helper ~ 1 + condition + up_looking +down_looki
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
+Check the fit.
+```{r model checking sep looking time}
+pp_check(brm.noninfo.looking)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.looking, draws = 200), 
+         stat="num_zeros") #function from above.
+```
+
 ```{r separated looking time full_estimates of each parameter, message=FALSE}
 brm.noninfo.looking %>% estimates.brm_fixef(prob = .95) %>%
   kable()
@@ -708,6 +754,15 @@ brm.noninfo.hab_trial_num %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
 
+Check fit again
+```{r model checking habitution}
+pp_check(brm.noninfo.hab_trial_num)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.hab_trial_num, draws = 200), 
+         stat="num_zeros") #function from above.
+```
+
+
 ### ambiguous choice
 ```{r touch both full_model, results=FALSE, message=FALSE}
 # Define priors
@@ -726,6 +781,13 @@ brm.noninfo.touch_both <- brm(chose_helper ~ 1 + condition + touch_both + condit
 ```{r full_estimates of each parameter, message=FALSE}
 brm.noninfo.touch_both %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+```
+
+```{r model checking touch both}
+pp_check(brm.noninfo.touch_both)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.touch_both, draws = 200), 
+         stat="num_zeros") #function from above.
 ```
 
 ### naive experimenter
@@ -747,6 +809,13 @@ brm.noninfo.RA_1_naive <- brm(chose_helper ~ 1 + condition + RA_1_naive + condit
 ```{r full_estimates of each parameter, message=FALSE}
 brm.noninfo.RA_1_naive %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+```
+
+```{r model checking naive}
+pp_check(brm.noninfo.RA_1_naive)
+ppc_stat(y = primary_data$chose_helper, 
+         yrep = posterior_predict(brm.noninfo.RA_1_naive, draws = 200), 
+         stat="num_zeros") #function from above.
 ```
 
 ## non-pre-registered exploratory analyses
