@@ -55,6 +55,7 @@ sum(clean_data$method=="eye-tracking")/nrow(clean_data)
 
 ```
 
+
 # Check reliability
 
 In this section, we check the coding reliability of looking time.
@@ -335,6 +336,10 @@ participant_summaries <- participant_summaries |>
 participant_summaries |> 
   summarise(across(starts_with("ex_"), \(x) sum(x, na.rm = TRUE))) |> 
   t()
+
+participant_summaries |> 
+  summarise(across(starts_with("ex_"), \(x) 100*sum(x, na.rm = TRUE)/nrow(participant_summaries))) |> 
+  t()
 ```
 
 
@@ -496,7 +501,20 @@ lab_choice_exclusion <- participant_summaries %>%
 primary_data <- merge(primary_data,lab_choice_exclusion, by = "lab_id", all.x = TRUE)
 ```
 
+# valid sample size in two conditions
+```{r valid sample size in two conditions}
+sum(primary_data$condition=="social")
+sum(primary_data$condition=="nonsocial")
+```
 
+# sample size for each lab (with valid data)
+```{r sample size for each lab (with valid data)}
+valid_lab <- subset(summary_by_lab,!is.na(mean_age))
+mean(valid_lab$valid_sample_size)
+sd(valid_lab$valid_sample_size)
+min(valid_lab$valid_sample_size)
+max(valid_lab$valid_sample_size)
+```
 
 # save data for analysis
 ```{r save data}
