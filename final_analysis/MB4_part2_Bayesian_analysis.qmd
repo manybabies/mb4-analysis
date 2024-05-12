@@ -41,8 +41,6 @@ source("geom_flat_violin.R")
 ```
 
 ```{r setup}
-source("geom_flat_violin.R")
-
 theme_set(theme_bw(base_size = 10))
 set.seed(705)
 ```
@@ -91,8 +89,9 @@ scatter <- ggplot(primary_data,
                       breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
-                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("age_scatter.pdf", scatter,
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+ 
+  geom_hline(yintercept = 0.5, linetype = "dashed", col = "black", lty = 2)
+ggsave("age_scatter.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -112,7 +111,7 @@ scatter <- ggplot(primary_data,
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("habituation_trial_scatter.pdf", scatter,
+ggsave("habituation_trial_scatter.png", scatter,
       units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -134,7 +133,7 @@ scatter <- ggplot(primary_data,
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("looking_scatter.pdf", scatter,
+ggsave("looking_scatter.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -156,8 +155,9 @@ scatter <- ggplot(primary_data,
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
     scale_x_continuous(breaks = c(0, 1),
-                     labels = c("Not habituated", "Habituated"))
-ggsave("habituation_scatter.pdf", scatter,
+                     labels = c("Not habituated", "Habituated"))+ 
+  geom_hline(yintercept = 0.5, linetype = "dashed", col = "black", lty = 2)
+ggsave("habituation_scatter.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -176,7 +176,7 @@ scatter <- ggplot(primary_data,
                       labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("screen_size_inches_scatter.pdf", scatter,
+ggsave("screen_size_inches_scatter.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -207,7 +207,7 @@ forest <- ggplot(by_lab,
                       labels = c("non-social", "social")) +
   scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
   theme(legend.position = "bottom")
-ggsave("forest.pdf", forest,
+ggsave("forest.png", forest,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (forest)
 ```
@@ -351,6 +351,7 @@ print(bf.noninfo.age)
 
 We plot the initial scatter plot by age with estimates from our full, non-informative Bayesian model.
 
+
 ```{r marginal_plot_noninfo, results=FALSE, message=FALSE}
 # Compute marginal effects
 marginal_effects <- brm.noninfo.full %>%
@@ -358,6 +359,7 @@ marginal_effects <- brm.noninfo.full %>%
   rename(z_age_days = x,
          chose_helper = predicted,
          condition = group)
+
 
 # Plot data and marginal effects
 scatter.bayes <- ggplot(primary_data,
@@ -373,15 +375,18 @@ scatter.bayes <- ggplot(primary_data,
   geom_point(position = position_jitter(height = .05, width = 0),
              size = 1) +
   xlab("Age (scaled centred)") + ylab("Choice") + theme(legend.position = "top") +
-  scale_colour_brewer(palette = "Dark2", name = "Condition",
+  scale_colour_manual(values = c("nonsocial" = "#1B9E77", "social" = "#D95F02"), 
+                      name = "Condition",
                       breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) +
-  scale_fill_brewer(palette = "Dark2", name = "Condition",
+  scale_fill_manual(values = c("nonsocial" = "#1B9E77", "social" = "#D95F02"), 
+                    name = "Condition",
                     breaks = c("nonsocial", "social"),
                     labels = c("non-social", "social")) +
   scale_y_continuous(breaks = c(0, 1),
-                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))
-ggsave("age_scatter_bayes_noninfo.pdf", scatter.bayes,
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+ 
+  geom_hline(yintercept = 0.5, linetype = "dashed", col = "black", lty = 2)
+ggsave("age_scatter_bayes_noninfo.png", scatter.bayes,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter.bayes)
 
@@ -1030,15 +1035,18 @@ scatter <- ggplot(primary_data,
                      labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+
   scale_x_continuous(breaks = c(0, 1),
                      labels = c("unhabituated", "habituated"))
-ggsave("hab_scatter.pdf", scatter,
+ggsave("hab_scatter.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 
 # Create the interaction variable
 primary_data$Interaction <- interaction(primary_data$condition, primary_data$hab)
 
-result <- tapply(primary_data$chose_helper, primary_data$Interaction, FUN = function(x) mean(x))  # You can use any summary function here
+result <- tapply(primary_data$chose_helper, primary_data$Interaction, FUN = function(x) mean(x))  
 
+print(result)
+
+result <- tapply(primary_data$chose_helper, primary_data$hab, FUN = function(x) mean(x))  
 print(result)
 ```
 
@@ -1510,7 +1518,7 @@ scatter <- ggplot(primary_data,
   scale_colour_brewer(palette = "Dark2", name = "Condition",
                       breaks = c("nonsocial", "social"),
                       labels = c("non-social", "social")) 
-ggsave("age_scatter_looking.pdf", scatter,
+ggsave("age_scatter_looking.png", scatter,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter)
 ```
@@ -1547,7 +1555,7 @@ scatter.bayes <- ggplot(primary_data,
   scale_fill_brewer(palette = "Dark2", name = "Condition",
                    breaks = c("nonsocial","social"),
                       labels = c("non-social","social")) 
-ggsave("age_scatter_bayes_looking.pdf", scatter.bayes,
+ggsave("age_scatter_bayes_looking.png", scatter.bayes,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (scatter.bayes)
 
