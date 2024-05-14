@@ -599,16 +599,16 @@ summary(freq.method)
 ### child level
 
 ```{r infant_handedness full_model, results=FALSE, message=FALSE}
-
+primary_data_1 <- primary_data
+primary_data_1$infant_handedness <- ifelse(primary_data_1$infant_handedness=="U",NA,primary_data_1$infant_handedness)
+ 
 freq.infant_handedness <- glmer(chose_helper ~ 1 + condition + infant_handedness + condition:infant_handedness +
-                       (1 + condition + infant_handedness + condition:infant_handedness | lab_id), 
-                data = primary_data, family = binomial(link = "logit"),
+                       (1 + condition + infant_handedness + condition:infant_handedness | lab_id),
+                data = primary_data_1, family = binomial(link = "logit"),
                 control=glmerControl(optimizer="bobyqa",
                      optCtrl=list(maxfun=2e5)))
-
+ 
 summary(freq.infant_handedness)
-
-# not sure what is happening here - extremely slow to run this model, returns extraordinarily large z values for all estimates (and infinitely small p-values), no correlations between fixed effects....
 ```
 
 
