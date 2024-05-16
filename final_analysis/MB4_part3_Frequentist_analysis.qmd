@@ -292,7 +292,6 @@ proportions <- primary_data_habituated %>%
 # Print the results
 print(paste0("Proportion of helper choice in the social condition: ", proportions$mean_proportion[proportions$condition == "social"]))
 print(paste0("Proportion of helper choice in the nonsocial condition: ", proportions$mean_proportion[proportions$condition == "nonsocial"]))
-
 ```
 
 ```{r full_model_habituated, results=FALSE, message=FALSE}
@@ -414,7 +413,7 @@ freq.total_nolooking <- glmer(chose_helper ~ 1 + condition +
 
 ```{r total looking comparison, message=FALSE}
 anova(freq.total_nolooking, freq.total_looking)
-# No effect of total looking time
+# no effect of total looking time
 ```
 
 We also separate looking time under helping/upward and hindering/downward scenarios and analyze their potential moderating effects.
@@ -428,8 +427,7 @@ freq.total_updownlooking <- glmer(chose_helper ~ 1 + condition + up_looking +dow
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.total_updownlooking)
-
-# No effect of looking time under helping/upward and hindering/downward scenarios 
+# no effect of looking time under helping/upward and hindering/downward scenarios 
 ```
 
 
@@ -444,8 +442,7 @@ freq.hab_trial_num <- glmer(chose_helper ~ 1 + condition + habituation_trial + c
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.hab_trial_num)
-
-# No effect of the number of habituation trials
+# no effect of the number of habituation trials
 ```
 
 ### ambiguous choice
@@ -458,8 +455,7 @@ freq.touch_both <- glmer(chose_helper ~ 1 + condition + touch_both + condition:t
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.touch_both)
-
-# No effect of ambiguous choice
+# no effect of ambiguous choice
 ```
 
 ### Naive experimenter
@@ -473,7 +469,7 @@ freq.RA_1_naive <- glmer(chose_helper ~ 1 + condition + RA_1_naive + condition:R
                                  optCtrl=list(maxfun=2e5)))
 
 summary(freq.RA_1_naive)
-# No effect of naive experimenter 
+# no effect of naive experimenter 
 ```
 
 ## Non-pre-registered exploratory analyses
@@ -490,7 +486,7 @@ freq.push_up_order <- glmer(chose_helper ~ 1 + condition + push_up_order + condi
                                  optCtrl=list(maxfun=2e5)))
 
 summary(freq.push_up_order)
-# No effect
+# no effect
 ```
 
 
@@ -503,7 +499,7 @@ freq.push_up_identity <- glmer(chose_helper ~ 1 + condition + push_up_identity +
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.push_up_identity)
-# No effect
+# no effect
 ```
 
 
@@ -516,7 +512,7 @@ freq.push_up_side <- glmer(chose_helper ~ 1 + condition + push_up_side + conditi
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.push_up_side)
-# No effect
+# no effect
 ```
 
 
@@ -531,7 +527,7 @@ freq.visual_angle <- glmer(chose_helper ~ 1 + condition + visual_angle + conditi
 
 
 summary(freq.visual_angle)
-# No effect
+# no effect
 ```
 
 
@@ -544,8 +540,7 @@ freq.second_session <- glmer(chose_helper ~ 1 + condition + second_session + con
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.second_session)
-# No effect
-
+# no effect
 ```
 
 
@@ -558,7 +553,7 @@ freq.choice_experimenter_mask <- glmer(chose_helper ~ 1 + condition + choice_exp
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.choice_experimenter_mask)
-# No effect
+# no effect
 ```
 
 
@@ -571,7 +566,7 @@ freq.method <- glmer(chose_helper ~ 1 + condition + method + condition:method +
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.method)
-# No effect
+# no effect
 ```
 
 
@@ -588,7 +583,6 @@ freq.infant_handedness <- glmer(chose_helper ~ 1 + condition + infant_handedness
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.infant_handedness)
-
 # no effect
 ```
 
@@ -603,7 +597,7 @@ freq.colorblindness_primaryfamily <- glmer(chose_helper ~ 1 + condition + colorb
 
 
 summary(freq.colorblindness_primaryfamily)
-# No effect
+# no effect
 ```
 
 
@@ -616,7 +610,7 @@ freq.participant_gender <- glmer(chose_helper ~ 1 + condition + participant_gend
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.participant_gender)
-# No effect
+# no effect
 ```
 
 ```{r percent_primarylanguage full_model, results=FALSE, message=FALSE}
@@ -629,7 +623,7 @@ freq.percent_primarylanguage <- glmer(chose_helper ~ 1 + condition + percent_pri
                                  optCtrl=list(maxfun=2e5)))
 
 summary(freq.percent_primarylanguage)
-# No effect
+# no effect
 ```
 
 ### Lab level
@@ -643,7 +637,7 @@ freq.exclusion_rate <- glmer(chose_helper ~ 1 + condition + exclusion_eligible +
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.exclusion_rate)
-# Intercept coefficient is statistically different from zero, no effects
+# no effect
 ```
 
 
@@ -655,7 +649,7 @@ freq.choice_exclusion_rate <- glmer(chose_helper ~ 1 + condition + choice_exclus
                         control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5)))
 
 summary(freq.choice_exclusion_rate)
-# Intercept coefficient is statistically different from zero, no effects
+# no effect
 ```
 
 
@@ -755,8 +749,7 @@ freq.nonhab.full <- glmer(chose_helper ~ 1 + condition +
                      optCtrl=list(maxfun=2e5)))
 
 summary(freq.nonhab.full)
-# No effect
-
+# no effect
 ```
 
 
@@ -783,9 +776,8 @@ freq.noninfo.social.nohab <- glmer(chose_helper ~ 1 +
 
 anova(freq.noninfo.social.nohab,freq.noninfo.social.full)
 summary(freq.noninfo.social.full)
-# Full-null comparison not significant
-# No effect
-
+# full-null comparison not significant
+# no effect
 ```
 
 
@@ -899,8 +891,7 @@ freq.looking.full.no_condition.old <- lmer(total_looking ~ 1 +
                 data = old_data)
 anova(freq.looking.full.old, freq.looking.full.no_condition.old)
 summary(freq.looking.full.old)
-
-# No effect of condition in the old age group
+# no effect of condition in the old age group
 ```
 
 We also examined the effect of age in the social and non-social conditions
@@ -925,8 +916,7 @@ freq.looking.full.no_age.nonsocial <- lmer(total_looking ~ 1 +  (1 |lab_id),
                 data = nonsocial_data)
 anova(freq.looking.full.nonsocial, freq.looking.full.no_age.nonsocial)
 summary(freq.looking.full.nonsocial)
-
-# No effect of age in the nonsocial condition
+# no effect of age in the nonsocial condition
 ```
 
 ```{r total looking time age_plot, message=FALSE}
