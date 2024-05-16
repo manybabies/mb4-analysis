@@ -62,7 +62,7 @@ In this section, we check the coding reliability of looking time.
 
 ```{r check_reliability}
 library(data.table)
-clean_reliability_looking_data <- read_csv(here("main_data", "clean_reliability_data.csv"))
+clean_reliability_looking_data <- read_csv(here("main_data", "lookingtime_reliability_data.csv"))
 # This needs to be downloaded from OSF
 
 reliability_long <- clean_reliability_looking_data |> 
