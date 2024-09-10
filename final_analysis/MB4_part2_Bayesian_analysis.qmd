@@ -212,6 +212,50 @@ ggsave("forest.png", forest,
        units = "mm", width = 180, height = 100, dpi = 1000)
 (forest)
 ```
+```{r lab plot revision}
+by_lab <- primary_data %>%
+  group_by(lab_id, condition) %>%
+  summarize(tested = n(),
+            chose_helper_mean = mean(chose_helper), 
+            chose_helper = sum(chose_helper),
+            ci_lower = binom.bayes(x = chose_helper, n = tested)$lower,
+            ci_upper = binom.bayes(x = chose_helper, n = tested)$upper) %>%
+  mutate(condition = factor(condition, levels = c("nonsocial", "social")))  # Ensure condition levels are ordered
+
+# Compute lab order based on chose_helper_mean in the social condition
+social_means <- by_lab %>%
+  filter(condition == "social") %>%
+  arrange(chose_helper_mean) %>%
+  pull(lab_id)
+
+# Update by_lab with ordered lab_id
+by_lab <- by_lab %>%
+  mutate(lab_id = factor(lab_id, levels = social_means))
+
+
+
+forest <- ggplot(by_lab,
+                 aes(x = lab_id, colour = condition,
+                     y = chose_helper_mean, ymin = ci_lower, ymax = ci_upper)) + 
+  #facet_wrap(~ condition, scales = "free_y", labeller = as_labeller(c(nonsocial = "Non-Social", social = "Social"))) +
+  geom_hline(yintercept = .5, col = "black", lty = 2) + 
+  geom_linerange(position = position_dodge(width = .5)) + 
+  geom_point(aes(size = tested), position = position_dodge(width = .5)) + 
+  coord_flip() + xlab("Lab") + ylab("Proportion Choosing Helper/Push-up character") + ylim(0,1) + 
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_size_continuous(name = "N", breaks = function(x) c(min(x), mean(x), max(x))) + 
+  theme(legend.position = "bottom")  # Adjust text size and margin
+ggsave("forest.png", forest,
+       units = "mm", width = 180, height = 150, dpi = 1000)
+
+(forest)
+
+```
+
+
+
 
 ## Bayesian analysis
 
@@ -591,8 +635,7 @@ Examine whether infants prefer helper over hinder in the social condition
 # select data
 social_data <- subset(primary_data,condition == "social")
 # Define priors
-priors.single <- c(set_prior("normal(.5753641, .1)",
-                           class = "Intercept"),
+priors.single <- c(
                  set_prior("normal(0, .5)",
                            class = "b"),
                  set_prior("student_t(3, 0, 2)",
@@ -606,7 +649,7 @@ brm.info.single.full <- brm(chose_helper ~ 1 + z_age_days +
                      prior = priors.single, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.info.single.no_intercept <- brm(chose_helper ~ z_age_days +
+brm.info.single.no_intercept <- brm(chose_helper ~ 0+ z_age_days +
                        (z_age_days | lab_id), 
                      family = bernoulli, data = social_data,
                      prior = priors.single, iter = 10000, 
@@ -618,7 +661,7 @@ brm.noninfo.single.full <- brm(chose_helper ~ 1 + z_age_days +
                      prior = priors.noninformative, iter = 10000, 
                      control = list(adapt_delta = .99, max_treedepth = 20),
                      chains = 4, future = T, save_all_pars = TRUE)
-brm.noninfo.single.no_intercept <- brm(chose_helper ~ z_age_days +
+brm.noninfo.single.no_intercept <- brm(chose_helper ~ 0 + z_age_days +
                        (z_age_days | lab_id), 
                      family = bernoulli, data = social_data,
                      prior = priors.noninformative, iter = 10000, 
@@ -646,6 +689,7 @@ brm.info.single.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 brm.noninfo.single.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
 ```
 
 # Exploraty analyses
@@ -685,12 +729,18 @@ ppc_stat(y = primary_data$chose_helper,
 brm.noninfo.total_looking %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 
-brm.noninfo.no_total_looking <- brm(chose_helper ~ 1 + condition + 
-                       (1 + condition | lab_id), 
-                        family = bernoulli, data = primary_data,
-                        prior = priors.noninformative, iter = 10000, 
-                        control = list(adapt_delta = .99, max_treedepth = 20),
-                        chains = 4, future = T, save_all_pars = TRUE)
+# Extract the data frame
+df <- brm.noninfo.total_looking %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.total_looking.csv", row.names = FALSE)
+
+#brm.noninfo.no_total_looking <- brm(chose_helper ~ 1 + condition + 
+ #                      (1 + condition | lab_id), 
+  #                      family = bernoulli, data = primary_data,
+   #                     prior = priors.noninformative, iter = 10000, 
+    #                    control = list(adapt_delta = .99, max_treedepth = 20),
+     #                   chains = 4, future = T, save_all_pars = TRUE)
 ```
 
 ```{r total looking Bayes factor, results=FALSE, message=FALSE}
@@ -731,6 +781,13 @@ ppc_stat(y = primary_data$chose_helper,
 ```{r separated looking time full_estimates of each parameter, message=FALSE}
 brm.noninfo.looking %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.looking %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.csv", row.names = FALSE)
+
 ```
 
 ### number of habituation trials
@@ -752,6 +809,13 @@ brm.noninfo.hab_trial_num <- brm(chose_helper ~ 1 + condition + habituation_tria
 ```{r habituation trials full_estimates of each parameter, message=FALSE}
 brm.noninfo.hab_trial_num %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.hab_trial_num %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.hab_trial_num.csv", row.names = FALSE)
+
 ```
 
 Check fit again
@@ -761,6 +825,68 @@ ppc_stat(y = primary_data$chose_helper,
          yrep = posterior_predict(brm.noninfo.hab_trial_num, draws = 200), 
          stat="num_zeros") #function from above.
 ```
+
+### dates (the number of days between the median test date and the earliest one)
+
+```{r dates full_model, results=FALSE, message=FALSE}
+dates_data <- read.csv(here("main_data", "laboratory_testing_log.csv"))
+
+primary_data_dates <- merge(primary_data,dates_data,by ="lab_id")
+
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.dates <- brm(chose_helper ~ 1 + condition + scale(dates) + condition:scale(dates) +
+                       (1 + condition + scale(dates) + condition:scale(dates) | lab_id), 
+                        family = bernoulli, data = primary_data_dates,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+
+```{r dates full_estimates of each parameter, message=FALSE}
+brm.noninfo.dates %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.dates %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.dates.csv", row.names = FALSE)
+
+```
+```{r plot dates and effect}
+aggregated_data <- primary_data_dates %>%
+  group_by(lab_id, condition) %>%
+  summarize(
+    dates = mean(dates),
+    chose_helper = mean(chose_helper),
+    .groups = 'drop'
+  )
+
+scatter <- ggplot(aggregated_data,
+                  aes(x = dates,
+                      y = chose_helper,
+                      colour = condition)) +
+  stat_smooth(method = "lm") +
+  geom_point(position = position_jitter(height = .05, width = 0),
+             size = 1) +
+  xlab("Dates (median)") + ylab("Choice") + theme(legend.position = "top") +
+  scale_colour_brewer(palette = "Dark2", name = "Condition",
+                      breaks = c("nonsocial", "social"),
+                      labels = c("non-social", "social")) +
+  scale_y_continuous(breaks = c(0, 1),
+                     labels = c("Hinderer/\nPush-down character", "Helper/\nPush-up character"))+ 
+  scale_x_continuous(breaks = c(0,100,200,300),labels=c("11/5/2022","2/13/2023","5/24/2023","9/1/2023"))+ 
+  geom_hline(yintercept = 0.5, linetype = "dashed", col = "black", lty = 2)
+ggsave("dates_scatter.png", scatter,
+       units = "mm", width = 180, height = 100, dpi = 1000)
+(scatter)
+
+```
+
 
 
 ### ambiguous choice
@@ -781,6 +907,14 @@ brm.noninfo.touch_both <- brm(chose_helper ~ 1 + condition + touch_both + condit
 ```{r full_estimates of each parameter, message=FALSE}
 brm.noninfo.touch_both %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+
+# Convert to data frame if necessary
+df <- brm.noninfo.touch_both %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.touch_both.csv", row.names = FALSE)
+
 ```
 
 ```{r model checking touch both}
@@ -809,6 +943,13 @@ brm.noninfo.RA_1_naive <- brm(chose_helper ~ 1 + condition + RA_1_naive + condit
 ```{r full_estimates of each parameter, message=FALSE}
 brm.noninfo.RA_1_naive %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.RA_1_naive %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.RA_1_naive.csv", row.names = FALSE)
+
 ```
 
 ```{r model checking naive}
@@ -840,6 +981,13 @@ brm.noninfo.push_up_order <- brm(chose_helper ~ 1 + condition + push_up_order + 
 ```{r push_up_order full_estimates of each parameter, message=FALSE}
 brm.noninfo.push_up_order %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.push_up_order %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.push_up_order.csv", row.names = FALSE)
+
 ```
 
 ```{r push_up_identity full_model, results=FALSE, message=FALSE}
@@ -859,6 +1007,13 @@ brm.noninfo.push_up_identity <- brm(chose_helper ~ 1 + condition + push_up_ident
 ```{r push_up_identity full_estimates of each parameter, message=FALSE}
 brm.noninfo.push_up_identity %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.push_up_identity %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.push_up_identity.csv", row.names = FALSE)
+
 ```
 
 ```{r push_up_side full_model, results=FALSE, message=FALSE}
@@ -878,6 +1033,13 @@ brm.noninfo.push_up_side <- brm(chose_helper ~ 1 + condition + push_up_side + co
 ```{r push_up_side full_estimates of each parameter, message=FALSE}
 brm.noninfo.push_up_side %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.push_up_side %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.push_up_side.csv", row.names = FALSE)
+
 ```
 
 ```{r visual_angle full_model, results=FALSE, message=FALSE}
@@ -899,6 +1061,13 @@ brm.noninfo.visual_angle <- brm(chose_helper ~ 1 + condition + visual_angle + co
 ```{r visual_angle full_estimates of each parameter, message=FALSE}
 brm.noninfo.visual_angle %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.visual_angle %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.visual_angle.csv", row.names = FALSE)
+
 ```
 
 ```{r second_session full_model, results=FALSE, message=FALSE}
@@ -918,6 +1087,13 @@ brm.noninfo.second_session <- brm(chose_helper ~ 1 + condition + second_session 
 ```{r second_session full_estimates of each parameter, message=FALSE}
 brm.noninfo.second_session %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.second_session %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.second_session.csv", row.names = FALSE)
+
 ```
 
 ```{r choice_experimenter_mask full_model, results=FALSE, message=FALSE}
@@ -937,6 +1113,13 @@ brm.noninfo.choice_experimenter_mask <- brm(chose_helper ~ 1 + condition + choic
 ```{r choice_experimenter_mask full_estimates of each parameter, message=FALSE}
 brm.noninfo.choice_experimenter_mask %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.choice_experimenter_mask %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.choice_experimenter_mask.csv", row.names = FALSE)
+
 ```
 
 ```{r method full_model, results=FALSE, message=FALSE}
@@ -956,6 +1139,13 @@ brm.noninfo.method <- brm(chose_helper ~ 1 + condition + method + condition:meth
 ```{r method full_estimates of each parameter, message=FALSE}
 brm.noninfo.method %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.method %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.method.csv", row.names = FALSE)
+
 ```
 
 ### child level
@@ -977,6 +1167,13 @@ brm.noninfo.infant_handedness <- brm(chose_helper ~ 1 + condition + infant_hande
 ```{r infant_handedness full_estimates of each parameter, message=FALSE}
 brm.noninfo.infant_handedness %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.infant_handedness %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.infant_handedness.csv", row.names = FALSE)
+
 ```
 
 ```{r colorblindness_primaryfamily full_model, results=FALSE, message=FALSE}
@@ -996,6 +1193,13 @@ brm.noninfo.colorblindness_primaryfamily <- brm(chose_helper ~ 1 + condition + c
 ```{r colorblindness_primaryfamily full_estimates of each parameter, message=FALSE}
 brm.noninfo.colorblindness_primaryfamily %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.colorblindness_primaryfamily %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.colorblindness_primaryfamily.csv", row.names = FALSE)
+
 ```
 
 ```{r participant_gender full_model, results=FALSE, message=FALSE}
@@ -1015,6 +1219,13 @@ brm.noninfo.participant_gender <- brm(chose_helper ~ 1 + condition + participant
 ```{r participant_gender full_estimates of each parameter, message=FALSE}
 brm.noninfo.participant_gender %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.participant_gender %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.participant_gender.csv", row.names = FALSE)
+
 ```
 
 ```{r percent_primarylanguage full_model, results=FALSE, message=FALSE}
@@ -1037,6 +1248,13 @@ brm.noninfo.percent_primarylanguage <- brm(chose_helper ~ 1 + condition + percen
 ```{r percent_primarylanguage full_estimates of each parameter, message=FALSE}
 brm.noninfo.percent_primarylanguage %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.percent_primarylanguage %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.percent_primarylanguage.csv", row.names = FALSE)
+
 ```
 
 ### lab level
@@ -1058,6 +1276,13 @@ brm.noninfo.exclusion_rate <- brm(chose_helper ~ 1 + condition + exclusion_eligi
 ```{r exclusion_rate full_estimates of each parameter, message=FALSE}
 brm.noninfo.exclusion_rate %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.exclusion_rate %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.exclusion_rate.csv", row.names = FALSE)
+
 ```
 
 ```{r choice_exclusion_rate full_model, results=FALSE, message=FALSE}
@@ -1077,6 +1302,13 @@ brm.noninfo.choice_exclusion_rate <- brm(chose_helper ~ 1 + condition + choice_e
 ```{r choice_exclusion_rate full_estimates of each parameter, message=FALSE}
 brm.noninfo.choice_exclusion_rate %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.choice_exclusion_rate %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.choice_exclusion_rate.csv", row.names = FALSE)
+
 ```
 
 
@@ -1142,6 +1374,13 @@ We can already look at the parameter estimates and their 95% Credible Intervals 
 ```{r habituation or not full_estimates, message=FALSE}
 brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.full %>% estimates.brm_fixef(prob = .95) 
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.full_habituationornot.csv", row.names = FALSE)
+
 ```
 
 Finally, we bridge-sample the posterior distribution of both the informative and non-informative model for later model comparison.
@@ -1212,6 +1451,13 @@ print(bf.noninfo.hab.condition)
 ```{r habituated condition parameters, results=FALSE, message=FALSE}
 brm.noninfo.hab.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.hab.full %>% estimates.brm_fixef(prob = .95) 
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.hab.full.csv", row.names = FALSE)
+
 ```
 
 ### Choice preference when not habituated
@@ -1253,6 +1499,13 @@ print(bf.noninfo.nonhab.condition)
 ```{r nonhabituated condition parameters, message=FALSE}
 brm.noninfo.nonhab.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.nonhab.full %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.nonhab.full.csv", row.names = FALSE)
+
 ```
 ### Choice preference in the social condition
 
@@ -1295,6 +1548,13 @@ print(bf.noninfo.social.hab)
 ```{r social condition parameters, results=FALSE, message=FALSE}
 brm.noninfo.social.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.social.full %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.social.full.csv", row.names = FALSE)
+
 ```
 
 ### Choice preference in the nonsocial condition
@@ -1338,6 +1598,13 @@ print(bf.noninfo.nonsocial.hab)
 ```{r nonsocial condition parameters, results=FALSE, message=FALSE}
 brm.noninfo.nonsocial.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.nonsocial.full %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, " brm.noninfo.nonsocial.full.csv", row.names = FALSE)
+
 ```
 
 ## exploratory analyses of looking time
@@ -1422,6 +1689,13 @@ print(bf.noninfo.looking.age)
 ```{r looking time parameters, results=FALSE, message=FALSE}
 brm.noninfo.looking.full %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.looking.full %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.full.csv", row.names = FALSE)
+
 ```
 
 ```{r full.exploratory_model total looking and age (young), results=FALSE, message=FALSE}
@@ -1445,6 +1719,12 @@ brm.noninfo.looking.no_condition.young <- brm(total_looking ~ 1 +  (1 |lab_id),
 ```{r looking time parameters (young), results=FALSE, message=FALSE}
 brm.noninfo.looking.full.young %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.looking.full.young %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.full.young.csv", row.names = FALSE)
 
 # Calculate mean and standard deviation for each condition
 mean_socialcondition <- mean(young_data$total_looking[young_data$condition == "social"])
@@ -1494,6 +1774,13 @@ brm.noninfo.looking.no_condition.old <- brm(total_looking ~ 1 +  (1 |lab_id),
 ```{r looking time parameters (old), results=FALSE, message=FALSE}
 brm.noninfo.looking.full.old %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.looking.full.old %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.full.old.csv", row.names = FALSE)
+
 ```
 ```{r Bayes factor total looking time and age (old), results=FALSE, message=FALSE}
 # Bridge-sample posterior
@@ -1527,6 +1814,13 @@ brm.noninfo.looking.no_age.social <- brm(total_looking ~ 1 +  (1 |lab_id),
 ```{r looking time parameters (social), results=FALSE, message=FALSE}
 brm.noninfo.looking.full.social %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Convert to data frame if necessary
+df <- brm.noninfo.looking.full.social %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.full.social.csv", row.names = FALSE)
+
 ```
 
 ```{r Bayes factor total looking time and age (social), results=FALSE, message=FALSE}
@@ -1561,6 +1855,13 @@ brm.noninfo.looking.no_age.nonsocial <- brm(total_looking ~ 1 +  (1 |lab_id),
 ```{r looking time parameters (nonsocial), results=FALSE, message=FALSE}
 brm.noninfo.looking.full.nonsocial %>% estimates.brm_fixef(prob = .95) %>%
   kable()
+
+# Extract the data frame
+df <- brm.noninfo.looking.full.nonsocial %>% estimates.brm_fixef(prob = .95)
+
+# Save the data frame as a CSV file
+write.csv(df, "brm.noninfo.looking.full.nonsocial.csv", row.names = FALSE)
+
 ```
 
 ```{r Bayes factor total looking time and age (nonsocial), results=FALSE, message=FALSE}
@@ -1704,3 +2005,24 @@ brm.noninfo.up_down <- brm(time ~ 1 + condition + identity + condition:identity 
 brm.noninfo.up_down %>% estimates.brm_fixef(prob = .95) %>%
   kable()
 ```
+
+# big model
+```{r a model including all moderators}
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+
+brm.noninfo.all <- brm(chose_helper ~ 1 + condition+ z_age_days + condition:z_age_days + total_looking + condition:total_looking + habituation_trial + condition:habituation_trial+ scale(dates) + condition:scale(dates) + touch_both + condition:touch_both+ RA_1_naive + condition:RA_1_naive+ push_up_order + condition:push_up_order+ push_up_identity + condition:push_up_identity+ push_up_side + condition:push_up_side+ visual_angle + condition:visual_angle+ second_session + condition:second_session+ choice_experimenter_mask + condition:choice_experimenter_mask+ method + condition:method+ infant_handedness + condition:infant_handedness+ colorblindness_primaryfamily + condition:colorblindness_primaryfamily+ participant_gender + condition:participant_gender+ percent_primarylanguage + condition:percent_primarylanguage+ exclusion_eligible + condition:exclusion_eligible+ choice_exclusion_rate + condition:choice_exclusion_rate+ habituation + condition:habituation+
+                       (1 | lab_id), 
+                        family = bernoulli, data = primary_data_dates,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+
+```
+```{r}
+brm.noninfo.all %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+
+```
+
