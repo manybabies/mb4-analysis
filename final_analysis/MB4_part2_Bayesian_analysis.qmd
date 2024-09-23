@@ -846,6 +846,39 @@ brm.noninfo.dates <- brm(chose_helper ~ 1 + condition + scale(dates) + condition
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
+```{r}
+brm.noninfo.dates_nodates <- brm(chose_helper ~ 1 + condition+ 
+                       (1 + condition| lab_id), 
+                        family = bernoulli, data = primary_data_dates,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+
+brm.noninfo.dates_nodatescondition <- brm(chose_helper ~ 1 + condition + scale(dates) +
+                       (1 + condition + scale(dates)| lab_id), 
+                        family = bernoulli, data = primary_data_dates,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+```
+```{r bayes_nodates message=FALSE}
+# Bridge-sample posterior
+bridge.noninfo.dates <- bridge_sampler(brm.noninfo.dates, silent = T)
+bridge.noninfo.no_dates <- bridge_sampler(brm.noninfo.dates_nodates, silent = T)
+# Compute Bayes factors
+bf.noninfo.dates <- bf(bridge.noninfo.dates, bridge.noninfo.no_dates)
+print(bf.noninfo.dates)
+
+# Bridge-sample posterior
+bridge.noninfo.no_datescondition <- bridge_sampler(brm.noninfo.dates_nodatescondition, silent = T)
+# Compute Bayes factors
+bf.noninfo.datescondition <- bf(bridge.noninfo.dates, bridge.noninfo.no_datescondition)
+print(bf.noninfo.datescondition)
+
+```
+
+
+
 ```{r dates full_estimates of each parameter, message=FALSE}
 brm.noninfo.dates %>% estimates.brm_fixef(prob = .95) %>%
   kable()
