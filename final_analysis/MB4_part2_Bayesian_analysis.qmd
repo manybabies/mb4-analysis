@@ -561,7 +561,7 @@ brm.noninfo.habituated.no_condition <- brm(chose_helper ~ 1 + z_age_days +
 
 We can now bridge-sample the posterior for this null model and compare it to the posterior from the full model to obtain a Bayes factor.
 
-```{r bayes_nocondition_habituated message=FALSE}
+```{r bayes_nocondition_habituated}
 # Bridge-sample posterior
 bridge.info.habituated.no_condition <- bridge_sampler(brm.info.habituated.no_condition, silent = T)
 bridge.noninfo.habituated.no_condition <- bridge_sampler(brm.noninfo.habituated.no_condition, silent = T)
@@ -846,7 +846,7 @@ brm.noninfo.dates <- brm(chose_helper ~ 1 + condition + scale(dates) + condition
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
 
-```{r}
+```{r nodates model}
 brm.noninfo.dates_nodates <- brm(chose_helper ~ 1 + condition+ 
                        (1 + condition| lab_id), 
                         family = bernoulli, data = primary_data_dates,
@@ -861,7 +861,8 @@ brm.noninfo.dates_nodatescondition <- brm(chose_helper ~ 1 + condition + scale(d
                         control = list(adapt_delta = .99, max_treedepth = 20),
                         chains = 4, future = T, save_all_pars = TRUE)
 ```
-```{r bayes_nodates message=FALSE}
+
+```{r bayes_nodates}
 # Bridge-sample posterior
 bridge.noninfo.dates <- bridge_sampler(brm.noninfo.dates, silent = T)
 bridge.noninfo.no_dates <- bridge_sampler(brm.noninfo.dates_nodates, silent = T)
