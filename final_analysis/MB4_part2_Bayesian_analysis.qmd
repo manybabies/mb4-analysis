@@ -1641,6 +1641,42 @@ write.csv(df, " brm.noninfo.nonsocial.full.csv", row.names = FALSE)
 
 ```
 
+```{r habituation effect centered condition}
+primary_data$condition2 <- ifelse(primary_data$condition=="social",0.5,-0.5)
+
+# Define priors
+priors.noninformative <- set_prior("student_t(3, 0, 2)",
+                                   class = "sd")
+
+# Run model
+brm.noninfo.full <- brm(chose_helper ~ 1 + condition2 + hab + condition2:hab + 
+                          (1 + condition2 + hab + condition2:hab | lab_id),
+                        family = bernoulli, data = primary_data,
+                        prior = priors.noninformative, iter = 10000, 
+                        control = list(adapt_delta = .99, max_treedepth = 20),
+                        chains = 4, future = T, save_all_pars = TRUE)
+
+brm.noninfo.full %>% estimates.brm_fixef(prob = .95) %>%
+  kable()
+
+bridge.noninfo.full <- bridge_sampler(brm.noninfo.full, silent = T)
+
+# Run model
+brm.noninfo.no_hab <- brm(chose_helper ~ 1 + condition2 + 
+                            (1 + condition2  | lab_id), 
+                          family = bernoulli, data = primary_data,
+                          prior = priors.noninformative, iter = 10000, 
+                          control = list(adapt_delta = .99, max_treedepth = 20),
+                          chains = 4, future = T, save_all_pars = TRUE)
+
+# Bridge-sample posterior
+bridge.noninfo.no_hab <- bridge_sampler(brm.noninfo.no_hab, silent = T)
+# Compute Bayes factors
+bf.noninfo.hab <- bf(bridge.noninfo.full, bridge.noninfo.no_hab)
+print(bf.noninfo.hab)
+```
+
+
 ## exploratory analyses of looking time
 
 ### total looking time
